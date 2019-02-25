@@ -6,17 +6,110 @@ file.  This project adheres to [Semantic Versioning](http://semver.org/).
 As this project is pre 1.0, breaking changes may happen for minor version
 bumps.  A breaking change will get clearly notified in this log.
 
-## v0.16.0 - 2019-02-04
+## v0.18.0
 
-### Upgrate notes
+### Breaking changes
 
-* Ledger > Admins need to reingest old ledgers because we introduced `successful_transaction_count` and `failed_transaction_count`.
+* Horizon requires Postgres 9.5+.
+* Removed `paging_token` field from `/accounts/{id}` endpoint.
+* Removed `/operation_fee_stats` endpoint. Please use `/fee_stats`.
 
 ### Deprecations
 
-* Root > `protocol_version` will be deprecated in v0.17.0. It is relaced by `current_protocol_version` and `core_supported_protocol_version`.
-* Ledger > `transaction_count` will be deprecated in v0.17.0.
-* Signer > `public_key` will be deprecated in v0.17.0.
+* `fee_paid` field on Transaction resource has been deprecated and will be removed in 0.19.0. Two new fields have been added: `max_fee` that defines the maximum fee the source account is willing to pay and `fee_charged` that defines the fee that was actually paid for a transaction. See [CAP-0005](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0005.md) for more information.
+* The following operation type names have been deprecated: `manage_offer` and `create_passive_offer`. The names will be changed to: `manage_sell_offer` and `create_passive_offer` in 0.19.0.
+
+### Changes
+
+* The following new config parameters were added. When old `max-db-connections` config parameter is set, it has a priority over the the new params. Run `horizon help` for more information.
+  * `horizon-db-max-open-connections`,
+  * `horizon-db-max-idle-connections`,
+  * `core-db-max-open-connections`,
+  * `core-db-max-idle-connections`.
+* Fixed `fee_paid` value in Transaction resource (#1358).
+* Fix "int64: value out of range" errors in trade aggregations (#1319).
+* Improved `horizon db reingest range` command.
+
+## v0.17.6 - 2019-04-29
+
+* Fixed a bug in `/order_book` when sum of amounts at a single price level exceeds `int64_max` (#1037).
+* Fixed a bug generating `ERROR` level log entries for bad requests (#1186).
+
+## v0.17.5 - 2019-04-24
+
+* Support for stellar-core [v11.0.0](https://github.com/stellar/stellar-core/releases/tag/v11.0.0).
+* Display trustline authorization state in the balances list.
+* Improved actions code.
+* Improved `horizon db reingest` command handling code.
+* Tracking app name and version that connects to Horizon (`X-App-Name`, `X-App-Version`).
+
+## v0.17.4 - 2019-03-14
+
+* Support for Stellar-Core 10.3.0 (new database schema v9).
+* Fix a bug in `horizon db reingest` command (no log output).
+* Multiple code improvements.
+
+## v0.17.3 - 2019-03-01
+
+* Fix a bug in `txsub` package that caused returning invalid status when resubmitting old transactions (#969).
+
+## v0.17.2 - 2019-02-28
+
+* Critical fix bug
+
+## v0.17.1 - 2019-02-28
+
+### Changes
+
+* Fixes high severity error in ingestion system.
+* Account detail endpoint (`/accounts/{id}`) includes `last_modified_ledger` field for account and for each non-native asset balance.
+
+## v0.17.0 - 2019-02-26
+
+### Upgrade notes
+
+This release introduces ingestion of failed transactions. This feature is turned off by default. To turn it on set environment variable: `INGEST_FAILED_TRANSACTIONS=true` or CLI param: `--ingest-failed-transactions=true`. Please note that ingesting failed transactions can double DB space requirements (especially important for full history deployments).
+
+### Database migration notes
+
+Previous versions work fine with new schema so you can migrate (`horizon db migrate up` using new binary) database without stopping the Horizon process. To reingest ledgers run `horizon db reingest` using Horizon 0.17.0 binary. You can take advantage of the new `horizon db reingest range` for parallel reingestion.
+
+### Deprecations
+
+* `/operation_fee_stats` is deprecated in favour of `/fee_stats`. Will be removed in v0.18.0.
+
+### Breaking changes
+
+* Fields removed in this version:
+  * Root > `protocol_version`, use `current_protocol_version` and `core_supported_protocol_version`.
+  * Ledger > `transaction_count`, use `successful_transaction_count` and `failed_transaction_count`.
+  * Signer > `public_key`, use `key`.
+* This Horizon version no longer supports Core <10.0.0. Horizon can still ingest version <10 ledgers.
+* Error event name during streaming changed to `error` to follow W3C specification.
+
+### Changes
+
+* Added ingestion of failed transactions (see Upgrade notes). Use `include_failed=true` GET parameter to display failed transactions and operations in collection endpoints.
+* `/fee_stats` endpoint has been extended with fee percentiles and ledger capacity usage. Both are useful in transaction fee estimations.
+* Fixed a bug causing slice bounds out of range at `/account/{id}/offers` endpoint during streaming.
+* Added `horizon db reingest range X Y` that reingests ledgers between X and Y sequence number (closed intervals).
+* Many code improvements.
+
+## v0.16.0 - 2019-02-04
+
+### Upgrade notes
+
+* Ledger > Admins need to reingest old ledgers because we introduced `successful_transaction_count` and `failed_transaction_count`.
+
+### Database migration notes
+
+Previous versions work fine with Horizon 0.16.0 schema so you can migrate (`horizon db migrate up`) database without stopping the Horizon process. To reingest ledgers run `horizon db reingest` using Horizon 0.16.0 binary.
+
+### Deprecations
+
+* Root > `protocol_version` will be removed in v0.17.0. It is replaced by `current_protocol_version` and `core_supported_protocol_version`.
+* Ledger > `transaction_count` will be removed in v0.17.0.
+* Signer > `public_key` will be removed in v0.17.0.
 
 ### Changes
 

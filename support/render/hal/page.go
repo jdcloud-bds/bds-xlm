@@ -1,15 +1,16 @@
 package hal
 
 import (
-	sUrl "github.com/stellar/go/support/url"
 	"net/url"
 	"strconv"
+
+	sUrl "github.com/stellar/go/support/url"
 )
 
 // BasePage represents the simplest page: one with no links and only embedded records.
 // Can be used to build custom page-like resources
 type BasePage struct {
-	FullURL *url.URL `json:"-"`
+	FullURL  *url.URL `json:"-"`
 	Embedded struct {
 		Records []Pageable `json:"records"`
 	} `json:"_embedded"`
@@ -41,9 +42,9 @@ type Links struct {
 type Page struct {
 	Links Links `json:"_links"`
 	BasePage
-	Order    string `json:"-"`
-	Limit    uint64 `json:"-"`
-	Cursor   string `json:"-"`
+	Order  string `json:"-"`
+	Limit  uint64 `json:"-"`
+	Cursor string `json:"-"`
 }
 
 // PopulateLinks sets the common links for a page.
@@ -53,10 +54,13 @@ func (p *Page) PopulateLinks() {
 	rec := p.Embedded.Records
 
 	//verify paging params
-	selfUrl := sUrl.URL(*p.FullURL).
-		SetParam("cursor", p.Cursor).
-		SetParam("order", p.Order).
-		SetParam("limit", strconv.FormatInt(int64(p.Limit), 10))
+	var selfUrl sUrl.URL
+	if p.FullURL != nil {
+		selfUrl = sUrl.URL(*p.FullURL).
+			SetParam("cursor", p.Cursor).
+			SetParam("order", p.Order).
+			SetParam("limit", strconv.FormatInt(int64(p.Limit), 10))
+	}
 
 	//self: re-encode existing query params
 	p.Links.Self = NewLink(selfUrl.String())

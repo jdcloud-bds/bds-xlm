@@ -4,133 +4,16 @@ import (
 	"net/http"
 
 	"github.com/stellar/go/protocols/horizon"
-	"github.com/stellar/go/services/horizon/internal/db2"
-	"github.com/stellar/go/services/horizon/internal/db2/history"
+	"github.com/stellar/go/services/horizon/internal/actions"
 	hProblem "github.com/stellar/go/services/horizon/internal/render/problem"
-	"github.com/stellar/go/services/horizon/internal/render/sse"
 	"github.com/stellar/go/services/horizon/internal/resourceadapter"
 	"github.com/stellar/go/services/horizon/internal/txsub"
 	"github.com/stellar/go/support/render/hal"
 	"github.com/stellar/go/support/render/problem"
 )
 
-// This file contains the actions:
-//
-// TransactionIndexAction: pages of transactions
-// TransactionShowAction: single transaction by sequence, by hash or id
-
-// TransactionIndexAction renders a page of ledger resources, identified by
-// a normal page query.
-type TransactionIndexAction struct {
-	Action
-	LedgerFilter  int32
-	AccountFilter string
-	PagingParams  db2.PageQuery
-	Records       []history.Transaction
-	Page          hal.Page
-}
-
-// JSON is a method for actions.JSON
-func (action *TransactionIndexAction) JSON() {
-	action.Do(
-		action.EnsureHistoryFreshness,
-		action.loadParams,
-		action.ValidateCursorWithinHistory,
-		action.loadRecords,
-		action.loadPage,
-		func() {
-			hal.Render(action.W, action.Page)
-		},
-	)
-}
-
-// SSE is a method for actions.SSE
-func (action *TransactionIndexAction) SSE(stream sse.Stream) {
-	action.Setup(
-		action.EnsureHistoryFreshness,
-		action.loadParams,
-		action.ValidateCursorWithinHistory,
-	)
-	action.Do(
-		action.loadRecords,
-		func() {
-			stream.SetLimit(int(action.PagingParams.Limit))
-			records := action.Records[stream.SentCount():]
-
-			for _, record := range records {
-				var res horizon.Transaction
-				resourceadapter.PopulateTransaction(action.R.Context(), &res, record)
-				stream.Send(sse.Event{ID: res.PagingToken(), Data: res})
-			}
-		},
-	)
-}
-
-func (action *TransactionIndexAction) loadParams() {
-	action.ValidateCursorAsDefault()
-	action.AccountFilter = action.GetAddress("account_id")
-	action.LedgerFilter = action.GetInt32("ledger_id")
-	action.PagingParams = action.GetPageQuery()
-}
-
-func (action *TransactionIndexAction) loadRecords() {
-	q := action.HistoryQ()
-	txs := q.Transactions()
-
-	switch {
-	case action.AccountFilter != "":
-		txs.ForAccount(action.AccountFilter)
-	case action.LedgerFilter > 0:
-		txs.ForLedger(action.LedgerFilter)
-	}
-
-	action.Err = txs.Page(action.PagingParams).Select(&action.Records)
-}
-
-func (action *TransactionIndexAction) loadPage() {
-	for _, record := range action.Records {
-		var res horizon.Transaction
-		resourceadapter.PopulateTransaction(action.R.Context(), &res, record)
-		action.Page.Add(res)
-	}
-
-	action.Page.FullURL = action.FullURL()
-	action.Page.Limit = action.PagingParams.Limit
-	action.Page.Cursor = action.PagingParams.Cursor
-	action.Page.Order = action.PagingParams.Order
-	action.Page.PopulateLinks()
-}
-
-// TransactionShowAction renders a ledger found by its sequence number.
-type TransactionShowAction struct {
-	Action
-	Hash     string
-	Record   history.Transaction
-	Resource horizon.Transaction
-}
-
-func (action *TransactionShowAction) loadParams() {
-	action.Hash = action.GetString("tx_id")
-}
-
-func (action *TransactionShowAction) loadRecord() {
-	action.Err = action.HistoryQ().TransactionByHash(&action.Record, action.Hash)
-}
-
-func (action *TransactionShowAction) loadResource() {
-	resourceadapter.PopulateTransaction(action.R.Context(), &action.Resource, action.Record)
-}
-
-// JSON is a method for actions.JSON
-func (action *TransactionShowAction) JSON() {
-	action.Do(
-		action.EnsureHistoryFreshness,
-		action.loadParams,
-		action.loadRecord,
-		action.loadResource,
-		func() { hal.Render(action.W, action.Resource) },
-	)
-}
+// Interface verification
+var _ actions.JSONer = (*TransactionCreateAction)(nil)
 
 // TransactionCreateAction submits a transaction to the stellar-core network
 // on behalf of the requesting client.
@@ -142,15 +25,14 @@ type TransactionCreateAction struct {
 }
 
 // JSON format action handler
-func (action *TransactionCreateAction) JSON() {
+func (action *TransactionCreateAction) JSON() error {
 	action.Do(
 		action.loadTX,
 		action.loadResult,
 		action.loadResource,
-
-		func() {
-			hal.Render(action.W, action.Resource)
-		})
+		func() { hal.Render(action.W, action.Resource) },
+	)
+	return action.Err
 }
 
 func (action *TransactionCreateAction) loadTX() {

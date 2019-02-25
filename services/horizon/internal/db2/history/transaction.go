@@ -4,7 +4,17 @@ import (
 	sq "github.com/Masterminds/squirrel"
 	"github.com/stellar/go/services/horizon/internal/db2"
 	"github.com/stellar/go/services/horizon/internal/toid"
+	"github.com/stellar/go/support/errors"
+	"github.com/stellar/go/xdr"
 )
+
+func (t *Transaction) IsSuccessful() bool {
+	if t.Successful == nil {
+		return true
+	}
+
+	return *t.Successful
+}
 
 // TransactionByHash is a query that loads a single row from the
 // `history_transactions` table based upon the provided hash.
@@ -16,24 +26,14 @@ func (q *Q) TransactionByHash(dest interface{}, hash string) error {
 	return q.Get(dest, sql)
 }
 
-// TransactionsForLastXLedgers filters the query to only the last X ledgers worth of transactions.
-// Currently, we hard code the query to return the last 5 ledgers worth of transactions. In the
-// future this may be configurable.
-func (q *Q) TransactionsForLastXLedgers(currentSeq int32, dest interface{}) error {
-	return q.GetRaw(dest, `
-		SELECT min(fee_paid/operation_count),  mode() within group (order by fee_paid/operation_count)
-		FROM history_transactions
-		WHERE ledger_sequence > $1 AND ledger_sequence <= $2
-	`, currentSeq-5, currentSeq)
-}
-
 // Transactions provides a helper to filter rows from the `history_transactions`
 // table with pre-defined filters.  See `TransactionsQ` methods for the
 // available filters.
 func (q *Q) Transactions() *TransactionsQ {
 	return &TransactionsQ{
-		parent: q,
-		sql:    selectTransaction,
+		parent:        q,
+		sql:           selectTransaction,
+		includeFailed: false,
 	}
 }
 
@@ -72,6 +72,30 @@ func (q *TransactionsQ) ForLedger(seq int32) *TransactionsQ {
 	return q
 }
 
+func (q *TransactionsQ) ForLedgerBatch(seqStart, seqEnd int32) *TransactionsQ {
+	ledgers := make([]Ledger, 0)
+	q.Err = q.parent.LedgerBySequenceBatch(&ledgers, seqStart, seqEnd)
+	if q.Err != nil {
+		return q
+	}
+
+	start := toid.ID{LedgerSequence: seqStart}
+	end := toid.ID{LedgerSequence: seqEnd + 1}
+	q.sql = q.sql.Where(
+		"ht.id >= ? AND ht.id < ?",
+		start.ToInt64(),
+		end.ToInt64(),
+	)
+
+	return q
+}
+
+// IncludeFailed changes the query to include failed transactions.
+func (q *TransactionsQ) IncludeFailed() *TransactionsQ {
+	q.includeFailed = true
+	return q
+}
+
 // Page specifies the paging constraints for the query being built by `q`.
 func (q *TransactionsQ) Page(page db2.PageQuery) *TransactionsQ {
 	if q.Err != nil {
@@ -88,8 +112,49 @@ func (q *TransactionsQ) Select(dest interface{}) error {
 		return q.Err
 	}
 
+	if q.includeFailed == false {
+		q.sql = q.sql.
+			Where("(ht.successful = true OR ht.successful IS NULL)")
+	}
+
 	q.Err = q.parent.Select(dest, q.sql)
-	return q.Err
+	if q.Err != nil {
+		return q.Err
+	}
+
+	transactions, ok := dest.(*[]Transaction)
+	if !ok {
+		return errors.New("dest is not *[]Transaction")
+	}
+
+	for _, t := range *transactions {
+		var resultXDR xdr.TransactionResult
+		err := xdr.SafeUnmarshalBase64(t.TxResult, &resultXDR)
+		if err != nil {
+			return err
+		}
+
+		if !q.includeFailed {
+			if !t.IsSuccessful() {
+				return errors.Errorf("Corrupted data! `include_failed=false` but returned transaction is failed: %s", t.TransactionHash)
+			}
+
+			if resultXDR.Result.Code != xdr.TransactionResultCodeTxSuccess {
+				return errors.Errorf("Corrupted data! `include_failed=false` but returned transaction is failed: %s %s", t.TransactionHash, t.TxResult)
+			}
+		}
+
+		// Check if `successful` equals resultXDR
+		if t.IsSuccessful() && resultXDR.Result.Code != xdr.TransactionResultCodeTxSuccess {
+			return errors.Errorf("Corrupted data! `successful=true` but returned transaction is not success: %s %s", t.TransactionHash, t.TxResult)
+		}
+
+		if !t.IsSuccessful() && resultXDR.Result.Code == xdr.TransactionResultCodeTxSuccess {
+			return errors.Errorf("Corrupted data! `successful=false` but returned transaction is success: %s %s", t.TransactionHash, t.TxResult)
+		}
+	}
+
+	return nil
 }
 
 var selectTransaction = sq.Select(
@@ -99,7 +164,10 @@ var selectTransaction = sq.Select(
 		"ht.application_order, " +
 		"ht.account, " +
 		"ht.account_sequence, " +
-		"ht.fee_paid, " +
+		"ht.max_fee, " +
+		// `fee_charged` is NULL by default, DB needs to be reingested
+		// to populate the value. If value is not present display `max_fee`.
+		"COALESCE(ht.fee_charged, ht.max_fee) as fee_charged, " +
 		"ht.operation_count, " +
 		"ht.tx_envelope, " +
 		"ht.tx_result, " +
@@ -107,6 +175,7 @@ var selectTransaction = sq.Select(
 		"ht.tx_fee_meta, " +
 		"ht.created_at, " +
 		"ht.updated_at, " +
+		"ht.successful, " +
 		"array_to_string(ht.signatures, ',') AS signatures, " +
 		"ht.memo_type, " +
 		"ht.memo, " +

@@ -17,6 +17,14 @@ func (q *Q) LedgerBySequence(dest interface{}, seq int32) error {
 	return q.Get(dest, sql)
 }
 
+//LedgerBySequenceBatch loads the ledgers range in start and end
+func (q *Q) LedgerBySequenceBatch(dest interface{}, seqStart int32, seqEnd int32) error {
+	sql := selectLedger.
+		Where("sequence >= ? and sequence <= ?", seqStart, seqEnd).OrderBy("sequence")
+
+	return q.Select(dest, sql)
+}
+
 // Ledgers provides a helper to filter rows from the `history_ledgers` table
 // with pre-defined filters.  See `LedgersQ` methods for the available filters.
 func (q *Q) Ledgers() *LedgersQ {
@@ -42,6 +50,20 @@ func (q *Q) LedgersBySequence(dest interface{}, seqs ...int32) error {
 	sql := selectLedger.Where(in, whereArgs...)
 
 	return q.Select(dest, sql)
+}
+
+// LedgerCapacityUsageStats returns ledger capacity stats for the last 5 ledgers.
+// Currently, we hard code the query to return the last 5 ledgers.
+// TODO: make the number of ledgers configurable.
+func (q *Q) LedgerCapacityUsageStats(currentSeq int32, dest *LedgerCapacityUsageStats) error {
+	return q.GetRaw(dest, `
+		SELECT
+			round(avg(
+				cast(successful_transaction_count+failed_transaction_count as decimal)/max_tx_set_size
+			), 2) AS "ledger_capacity_usage"
+		FROM history_ledgers
+		WHERE sequence > $1 AND sequence <= $2
+	`, currentSeq-5, currentSeq)
 }
 
 // Page specifies the paging constraints for the query being built by `q`.

@@ -3,9 +3,9 @@ package horizon
 import (
 	"testing"
 
+	"github.com/stellar/go/protocols/horizon/effects"
 	"github.com/stellar/go/services/horizon/internal/db2/history"
 	"github.com/stellar/go/services/horizon/internal/test"
-	"github.com/stellar/go/protocols/horizon/effects"
 )
 
 func TestEffectActions_Index(t *testing.T) {
@@ -67,6 +67,12 @@ func TestEffectActions_Index(t *testing.T) {
 		if ht.Assert.Equal(200, w.Code) {
 			ht.Assert.PageOf(3, w.Body)
 		}
+
+		// Check extra params
+		w = ht.Get("/ledgers/100/effects?account_id=GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H")
+		ht.Assert.Equal(400, w.Code)
+		w = ht.Get("/accounts/GCXKG6RN4ONIEPCMNFB732A436Z5PNDSRLGWK7GBLCMQLIFO4S7EYWVU/effects?ledger_id=5")
+		ht.Assert.Equal(400, w.Code)
 
 		// before history
 		ht.ReapHistory(1)

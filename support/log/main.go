@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 
-	"github.com/segmentio/go-loggly"
+	loggly "github.com/segmentio/go-loggly"
 	"github.com/sirupsen/logrus"
 )
 
@@ -135,6 +135,16 @@ func Error(args ...interface{}) {
 	DefaultLogger.Error(args...)
 }
 
+// Fatalf logs a message at the Fatal severity.
+func Fatalf(format string, args ...interface{}) {
+	DefaultLogger.Fatalf(format, args...)
+}
+
+// Fatal logs a message at the Fatal severity.
+func Fatal(args ...interface{}) {
+	DefaultLogger.Fatal(args...)
+}
+
 // Panicf logs a message at the Panic severity.
 func Panicf(format string, args ...interface{}) {
 	DefaultLogger.Panicf(format, args...)
@@ -147,7 +157,7 @@ func Panic(args ...interface{}) {
 
 // StartTest shifts the default logger into "test" mode.  See Entry's
 // documentation for the StartTest() method for more info.
-func StartTest(level logrus.Level) func() []*logrus.Entry {
+func StartTest(level logrus.Level) func() []logrus.Entry {
 	return DefaultLogger.StartTest(level)
 }
 

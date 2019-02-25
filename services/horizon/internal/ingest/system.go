@@ -26,7 +26,7 @@ func (i *System) Backfill(n uint) error {
 		WithField("ingested", is.Ingested).
 		Info("ingest: backfill start")
 
-	is.Run()
+	is.Run(false)
 
 	log.WithField("start", start).
 		WithField("end", end).
@@ -40,7 +40,6 @@ func (i *System) Backfill(n uint) error {
 // ClearAll removes all previously ingested historical data from the horizon
 // database.
 func (i *System) ClearAll() error {
-
 	hdb := i.HorizonDB.Clone()
 	ingestion := &Ingestion{DB: hdb}
 
@@ -122,7 +121,6 @@ func (i *System) ReingestAll() (int, error) {
 
 // ReingestOutdated finds old ledgers and reimports them.
 func (i *System) ReingestOutdated() (n int, err error) {
-
 	q := history.Q{Session: i.HorizonDB}
 
 	// NOTE: this loop will never terminate if some bug were cause a ledger
@@ -190,7 +188,7 @@ func (i *System) ReingestRange(start, end int32) (int, error) {
 	is.Cursor = NewCursor(start, end, i)
 	is.ClearExisting = true
 
-	is.Run()
+	is.Run(false)
 	log.WithField("start", start).
 		WithField("end", end).
 		WithField("err", is.Err).
@@ -301,7 +299,7 @@ func (i *System) runOnce() {
 	log.WithFields(logFields).Info("Ingesting ledgers...")
 	ingestStart := time.Now()
 
-	is.Run()
+	is.Run(true)
 
 	if is.Err != nil {
 		// We need to use `Error` method because `is.Err` is `withMessage` struct from

@@ -3,8 +3,12 @@ package ingest
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"net/http"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/stellar/go/clients/stellarcore"
@@ -22,7 +26,18 @@ import (
 
 // Run starts an attempt to ingest the range of ledgers specified in this
 // session.
-func (is *Session) Run() {
+
+type BlockData struct {
+	Records []BlockValue `json:"records"`
+}
+
+type BlockValue struct {
+	Value ledgerInBlock `json:"value"`
+}
+
+func (is *Session) Run(flag bool) {
+	bd := new(BlockData)
+	bd.Records = make([]BlockValue, 0)
 	if is.Cursor == nil {
 		is.Err = errors.New("no cursor set on session")
 		return
@@ -47,8 +62,17 @@ func (is *Session) Run() {
 
 		is.validateLedger()
 		is.clearLedger()
-		is.ingestLedger()
+		ledger := is.ingestLedger()
+		bv := new(BlockValue)
+		bv.Value = *ledger
+		bd.Records = append(bd.Records, *bv)
+
 		is.flush()
+
+		if is.Config.Kafka && flag {
+			is.sendToKafka(sectionStart+i, is.Cursor.LedgerSequence(), bd)
+		}
+		bd.Records = make([]BlockValue, 0)
 
 		i++
 		if i%100 == 0 {
@@ -89,6 +113,38 @@ func (is *Session) Run() {
 	is.Err = errors.Wrap(is.reportCursorState(), "reportCursorState error")
 }
 
+func (is *Session) sendToKafka(start, end int32, data *BlockData) error {
+	sub, _ := json.Marshal(data)
+	body := ioutil.NopCloser(strings.NewReader(string(sub)))
+
+	client := &http.Client{}
+	var url string
+	if is.Config.KafkaProxyPort == uint(80) {
+		url = fmt.Sprintf("http://%s/topics/%s", is.Config.KafkaProxyHost, is.Config.KafkaTopic)
+	} else {
+		url = fmt.Sprintf("http://%s:%d/topics/%s", is.Config.KafkaProxyHost, is.Config.KafkaProxyPort, is.Config.KafkaTopic)
+	}
+	req, _ := http.NewRequest("POST", url, body)
+	req.Header.Set("Content-Type", "application/vnd.kafka.json.v1+json")
+	req.Header.Set("Host", is.Config.KafkaProxyHost)
+
+	resp, err := client.Do(req)
+
+	defer resp.Body.Close()
+	if err != nil {
+		return err
+	}
+	_, err = ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	log.WithFields(ilog.F{
+		"start": start,
+		"end":   end,
+	}).Info("Horizon send data into kafka successfully!")
+	return nil
+}
+
 func (is *Session) clearLedger() {
 	if is.Err != nil {
 		return
@@ -97,9 +153,6 @@ func (is *Session) clearLedger() {
 	if !is.ClearExisting {
 		return
 	}
-
-	startLedger, endLedger := is.Cursor.LedgerRange()
-	log.WithFields(ilog.F{"toid_start": startLedger, "toid_end": endLedger}).Info("Clearing ledgers")
 
 	start := time.Now()
 	is.Err = is.Ingestion.Clear(is.Cursor.LedgerRange())
@@ -197,19 +250,22 @@ func (is *Session) ingestEffects() {
 		effects.Add(source, history.EffectAccountDebited, dets)
 
 		is.ingestTradeEffects(effects, source, resultSuccess.Offers)
-	case xdr.OperationTypeManageOffer:
-		result := is.Cursor.OperationResult().MustManageOfferResult().MustSuccess()
+	case xdr.OperationTypeManageBuyOffer:
+		result := is.Cursor.OperationResult().MustManageBuyOfferResult().MustSuccess()
 		is.ingestTradeEffects(effects, source, result.OffersClaimed)
-	case xdr.OperationTypeCreatePassiveOffer:
+	case xdr.OperationTypeManageSellOffer:
+		result := is.Cursor.OperationResult().MustManageSellOfferResult().MustSuccess()
+		is.ingestTradeEffects(effects, source, result.OffersClaimed)
+	case xdr.OperationTypeCreatePassiveSellOffer:
 		claims := []xdr.ClaimOfferAtom{}
 		result := is.Cursor.OperationResult()
 
 		// KNOWN ISSUE:  stellar-core creates results for CreatePassiveOffer operations
 		// with the wrong result arm set.
-		if result.Type == xdr.OperationTypeManageOffer {
-			claims = result.MustManageOfferResult().MustSuccess().OffersClaimed
+		if result.Type == xdr.OperationTypeManageSellOffer {
+			claims = result.MustManageSellOfferResult().MustSuccess().OffersClaimed
 		} else {
-			claims = result.MustCreatePassiveOfferResult().MustSuccess().OffersClaimed
+			claims = result.MustCreatePassiveSellOfferResult().MustSuccess().OffersClaimed
 		}
 
 		is.ingestTradeEffects(effects, source, claims)
@@ -382,9 +438,10 @@ func (is *Session) ingestEffects() {
 }
 
 // ingestLedger ingests the current ledger
-func (is *Session) ingestLedger() {
+func (is *Session) ingestLedger() *ledgerInBlock {
+	ledger := new(ledgerInBlock)
 	if is.Err != nil {
-		return
+		return ledger
 	}
 
 	start := time.Now()
@@ -396,8 +453,20 @@ func (is *Session) ingestLedger() {
 		is.Cursor.SuccessfulLedgerOperationCount(),
 	)
 
+	ledger = is.Ingestion.LedgerRecord(
+		is.Cursor.LedgerID(),
+		is.Cursor.Ledger(),
+		is.Cursor.SuccessfulTransactionCount(),
+		is.Cursor.FailedTransactionCount(),
+		is.Cursor.SuccessfulLedgerOperationCount(),
+	)
+
 	for is.Cursor.NextTx() {
-		is.ingestTransaction()
+		t := is.ingestTransaction()
+		if !is.Cursor.Transaction().IsSuccessful() {
+			continue
+		}
+		ledger.Transactions = append(ledger.Transactions, t)
 	}
 
 	is.Ingested++
@@ -405,12 +474,13 @@ func (is *Session) ingestLedger() {
 		is.Metrics.IngestLedgerTimer.Update(time.Since(start))
 	}
 
-	return
+	return ledger
 }
 
-func (is *Session) ingestOperation() {
+func (is *Session) ingestOperation() *operation {
+	op := new(operation)
 	if is.Err != nil {
-		return
+		return op
 	}
 
 	is.Err = is.Ingestion.Operation(
@@ -423,8 +493,17 @@ func (is *Session) ingestOperation() {
 	)
 	if is.Err != nil {
 		is.Err = errors.Wrap(is.Err, "Ingestion.Operation error")
-		return
+		return op
 	}
+
+	op, is.Err = is.Ingestion.OperationRecord(
+		is.Cursor.OperationID(),
+		is.Cursor.TransactionID(),
+		is.Cursor.OperationOrder(),
+		is.Cursor.OperationSourceAccount(),
+		is.Cursor.OperationType(),
+		is.operationDetails(),
+	)
 
 	is.ingestOperationParticipants()
 	is.ingestEffects()
@@ -438,8 +517,9 @@ func (is *Session) ingestOperation() {
 
 	if is.Err != nil {
 		is.Err = errors.Wrap(is.Err, "Cursor.AssetsModified.IngestOperation error")
-		return
+		return op
 	}
+	return op
 }
 
 func (is *Session) ingestOperationParticipants() {
@@ -535,22 +615,27 @@ func (is *Session) ingestTrades() {
 			MustSuccess().
 			Offers
 
-	case xdr.OperationTypeManageOffer:
-		manageOfferResult := cursor.OperationResult().MustManageOfferResult().MustSuccess()
+	case xdr.OperationTypeManageBuyOffer:
+		manageOfferResult := cursor.OperationResult().MustManageBuyOfferResult().MustSuccess()
 		trades = manageOfferResult.OffersClaimed
 		buyOffer, buyOfferExists = manageOfferResult.Offer.GetOffer()
 
-	case xdr.OperationTypeCreatePassiveOffer:
+	case xdr.OperationTypeManageSellOffer:
+		manageOfferResult := cursor.OperationResult().MustManageSellOfferResult().MustSuccess()
+		trades = manageOfferResult.OffersClaimed
+		buyOffer, buyOfferExists = manageOfferResult.Offer.GetOffer()
+
+	case xdr.OperationTypeCreatePassiveSellOffer:
 		result := cursor.OperationResult()
 
 		// KNOWN ISSUE:  stellar-core creates results for CreatePassiveOffer operations
 		// with the wrong result arm set.
-		if result.Type == xdr.OperationTypeManageOffer {
-			manageOfferResult := result.MustManageOfferResult().MustSuccess()
+		if result.Type == xdr.OperationTypeManageSellOffer {
+			manageOfferResult := result.MustManageSellOfferResult().MustSuccess()
 			trades = manageOfferResult.OffersClaimed
 			buyOffer, buyOfferExists = manageOfferResult.Offer.GetOffer()
 		} else {
-			passiveOfferResult := result.MustCreatePassiveOfferResult().MustSuccess()
+			passiveOfferResult := result.MustCreatePassiveSellOfferResult().MustSuccess()
 			trades = passiveOfferResult.OffersClaimed
 			buyOffer, buyOfferExists = passiveOfferResult.Offer.GetOffer()
 		}
@@ -633,14 +718,15 @@ func (is *Session) tradeDetails(buyer, seller xdr.AccountId, claim xdr.ClaimOffe
 	return
 }
 
-func (is *Session) ingestTransaction() {
+func (is *Session) ingestTransaction() *transaction {
+	t := new(transaction)
 	if is.Err != nil {
-		return
+		return t
 	}
 
 	// skip ingesting failed transactions
 	if !is.Cursor.Transaction().IsSuccessful() {
-		return
+		return t
 	}
 	is.Ingestion.Transaction(
 		is.Cursor.TransactionID(),
@@ -648,11 +734,19 @@ func (is *Session) ingestTransaction() {
 		is.Cursor.TransactionFee(),
 	)
 
+	t = is.Ingestion.TransactionRecords(
+		is.Cursor.TransactionID(),
+		is.Cursor.Transaction(),
+		is.Cursor.TransactionFee(),
+	)
+
 	for is.Cursor.NextOp() {
-		is.ingestOperation()
+		op := is.ingestOperation()
+		t.Operations = append(t.Operations, op)
 	}
 
 	is.ingestTransactionParticipants()
+	return t
 }
 
 func (is *Session) ingestTransactionParticipants() {
@@ -722,13 +816,16 @@ func (is *Session) operationDetails() map[string]interface{} {
 		details["from"] = source.Address()
 		details["to"] = op.Destination.Address()
 
-		result := c.OperationResult().MustPathPaymentResult()
-
 		details["amount"] = amount.String(op.DestAmount)
-		details["source_amount"] = amount.String(result.SendAmount())
+		details["source_amount"] = amount.String(0)
 		details["source_max"] = amount.String(op.SendMax)
 		is.assetDetails(details, op.DestAsset, "")
 		is.assetDetails(details, op.SendAsset, "source_")
+
+		if c.Transaction().IsSuccessful() {
+			result := c.OperationResult().MustPathPaymentResult()
+			details["source_amount"] = amount.String(result.SendAmount())
+		}
 
 		var path = make([]map[string]interface{}, len(op.Path))
 		for i := range op.Path {
@@ -736,8 +833,19 @@ func (is *Session) operationDetails() map[string]interface{} {
 			is.assetDetails(path[i], op.Path[i], "")
 		}
 		details["path"] = path
-	case xdr.OperationTypeManageOffer:
-		op := c.Operation().Body.MustManageOfferOp()
+	case xdr.OperationTypeManageBuyOffer:
+		op := c.Operation().Body.MustManageBuyOfferOp()
+		details["offer_id"] = op.OfferId
+		details["amount"] = amount.String(op.BuyAmount)
+		details["price"] = op.Price.String()
+		details["price_r"] = map[string]interface{}{
+			"n": op.Price.N,
+			"d": op.Price.D,
+		}
+		is.assetDetails(details, op.Buying, "buying_")
+		is.assetDetails(details, op.Selling, "selling_")
+	case xdr.OperationTypeManageSellOffer:
+		op := c.Operation().Body.MustManageSellOfferOp()
 		details["offer_id"] = op.OfferId
 		details["amount"] = amount.String(op.Amount)
 		details["price"] = op.Price.String()
@@ -747,9 +855,8 @@ func (is *Session) operationDetails() map[string]interface{} {
 		}
 		is.assetDetails(details, op.Buying, "buying_")
 		is.assetDetails(details, op.Selling, "selling_")
-
-	case xdr.OperationTypeCreatePassiveOffer:
-		op := c.Operation().Body.MustCreatePassiveOfferOp()
+	case xdr.OperationTypeCreatePassiveSellOffer:
+		op := c.Operation().Body.MustCreatePassiveSellOfferOp()
 		details["amount"] = amount.String(op.Amount)
 		details["price"] = op.Price.String()
 		details["price_r"] = map[string]interface{}{
@@ -874,7 +981,7 @@ func (is *Session) reportCursorState() error {
 
 	core := &stellarcore.Client{URL: is.StellarCoreURL}
 
-	err := core.SetCursor(context.Background(), "HORIZON", is.Cursor.LastLedger)
+	err := core.SetCursor(context.Background(), is.Cursor.Name, is.Cursor.LastLedger)
 
 	if err != nil {
 		return errors.Wrap(err, "SetCursor failed")

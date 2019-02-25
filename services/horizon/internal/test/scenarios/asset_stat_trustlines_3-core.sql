@@ -1,6 +1,5 @@
 running recipe
-recipe finished, closing ledger
-ledger closed
+recipe finished
 --
 -- PostgreSQL database dump
 --
@@ -20,23 +19,20 @@ SET row_security = off;
 SET search_path = public, pg_catalog;
 
 DROP INDEX IF EXISTS public.upgradehistbyseq;
-DROP INDEX IF EXISTS public.signersaccount;
-DROP INDEX IF EXISTS public.sellingissuerindex;
 DROP INDEX IF EXISTS public.scpquorumsbyseq;
 DROP INDEX IF EXISTS public.scpenvsbyseq;
-DROP INDEX IF EXISTS public.priceindex;
 DROP INDEX IF EXISTS public.ledgersbyseq;
 DROP INDEX IF EXISTS public.histfeebyseq;
 DROP INDEX IF EXISTS public.histbyseq;
-DROP INDEX IF EXISTS public.buyingissuerindex;
+DROP INDEX IF EXISTS public.bestofferindex;
 DROP INDEX IF EXISTS public.accountbalances;
 ALTER TABLE IF EXISTS ONLY public.upgradehistory DROP CONSTRAINT IF EXISTS upgradehistory_pkey;
 ALTER TABLE IF EXISTS ONLY public.txhistory DROP CONSTRAINT IF EXISTS txhistory_pkey;
 ALTER TABLE IF EXISTS ONLY public.txfeehistory DROP CONSTRAINT IF EXISTS txfeehistory_pkey;
 ALTER TABLE IF EXISTS ONLY public.trustlines DROP CONSTRAINT IF EXISTS trustlines_pkey;
 ALTER TABLE IF EXISTS ONLY public.storestate DROP CONSTRAINT IF EXISTS storestate_pkey;
-ALTER TABLE IF EXISTS ONLY public.signers DROP CONSTRAINT IF EXISTS signers_pkey;
 ALTER TABLE IF EXISTS ONLY public.scpquorums DROP CONSTRAINT IF EXISTS scpquorums_pkey;
+ALTER TABLE IF EXISTS ONLY public.quoruminfo DROP CONSTRAINT IF EXISTS quoruminfo_pkey;
 ALTER TABLE IF EXISTS ONLY public.pubsub DROP CONSTRAINT IF EXISTS pubsub_pkey;
 ALTER TABLE IF EXISTS ONLY public.publishqueue DROP CONSTRAINT IF EXISTS publishqueue_pkey;
 ALTER TABLE IF EXISTS ONLY public.peers DROP CONSTRAINT IF EXISTS peers_pkey;
@@ -51,9 +47,9 @@ DROP TABLE IF EXISTS public.txhistory;
 DROP TABLE IF EXISTS public.txfeehistory;
 DROP TABLE IF EXISTS public.trustlines;
 DROP TABLE IF EXISTS public.storestate;
-DROP TABLE IF EXISTS public.signers;
 DROP TABLE IF EXISTS public.scpquorums;
 DROP TABLE IF EXISTS public.scphistory;
+DROP TABLE IF EXISTS public.quoruminfo;
 DROP TABLE IF EXISTS public.pubsub;
 DROP TABLE IF EXISTS public.publishqueue;
 DROP TABLE IF EXISTS public.peers;
@@ -104,9 +100,9 @@ SET default_with_oids = false;
 
 CREATE TABLE accountdata (
     accountid character varying(56) NOT NULL,
-    dataname character varying(64) NOT NULL,
+    dataname character varying(88) NOT NULL,
     datavalue character varying(112) NOT NULL,
-    lastmodified integer DEFAULT 0 NOT NULL
+    lastmodified integer NOT NULL
 );
 
 
@@ -120,12 +116,13 @@ CREATE TABLE accounts (
     seqnum bigint NOT NULL,
     numsubentries integer NOT NULL,
     inflationdest character varying(56),
-    homedomain character varying(32) NOT NULL,
+    homedomain character varying(44) NOT NULL,
     thresholds text NOT NULL,
     flags integer NOT NULL,
     lastmodified integer NOT NULL,
     buyingliabilities bigint,
     sellingliabilities bigint,
+    signers text,
     CONSTRAINT accounts_balance_check CHECK ((balance >= 0)),
     CONSTRAINT accounts_buyingliabilities_check CHECK ((buyingliabilities >= 0)),
     CONSTRAINT accounts_numsubentries_check CHECK ((numsubentries >= 0)),
@@ -165,12 +162,8 @@ CREATE TABLE ledgerheaders (
 CREATE TABLE offers (
     sellerid character varying(56) NOT NULL,
     offerid bigint NOT NULL,
-    sellingassettype integer NOT NULL,
-    sellingassetcode character varying(12),
-    sellingissuer character varying(56),
-    buyingassettype integer NOT NULL,
-    buyingassetcode character varying(12),
-    buyingissuer character varying(56),
+    sellingasset text NOT NULL,
+    buyingasset text NOT NULL,
     amount bigint NOT NULL,
     pricen integer NOT NULL,
     priced integer NOT NULL,
@@ -191,7 +184,7 @@ CREATE TABLE peers (
     port integer DEFAULT 0 NOT NULL,
     nextattempt timestamp without time zone NOT NULL,
     numfailures integer DEFAULT 0 NOT NULL,
-    flags integer DEFAULT 0 NOT NULL,
+    type integer NOT NULL,
     CONSTRAINT peers_numfailures_check CHECK ((numfailures >= 0)),
     CONSTRAINT peers_port_check CHECK (((port > 0) AND (port <= 65535)))
 );
@@ -218,6 +211,16 @@ CREATE TABLE pubsub (
 
 
 --
+-- Name: quoruminfo; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE quoruminfo (
+    nodeid character(56) NOT NULL,
+    qsethash character(64) NOT NULL
+);
+
+
+--
 -- Name: scphistory; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -238,17 +241,6 @@ CREATE TABLE scpquorums (
     lastledgerseq integer NOT NULL,
     qset text NOT NULL,
     CONSTRAINT scpquorums_lastledgerseq_check CHECK ((lastledgerseq >= 0))
-);
-
-
---
--- Name: signers; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE signers (
-    accountid character varying(56) NOT NULL,
-    publickey character varying(56) NOT NULL,
-    weight integer NOT NULL
 );
 
 
@@ -335,9 +327,9 @@ CREATE TABLE upgradehistory (
 -- Data for Name: accounts; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO accounts VALUES ('GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H', 999999979999999800, 2, 0, NULL, '', 'AQAAAA==', 0, 2, NULL, NULL);
-INSERT INTO accounts VALUES ('GC23QF2HUE52AMXUFUH3AYJAXXGXXV2VHXYYR6EYXETPKDXZSAW67XO4', 10000000000, 8589934592, 0, NULL, '', 'AQAAAA==', 0, 2, NULL, NULL);
-INSERT INTO accounts VALUES ('GCXKG6RN4ONIEPCMNFB732A436Z5PNDSRLGWK7GBLCMQLIFO4S7EYWVU', 9999999800, 8589934594, 2, NULL, '', 'AQAAAA==', 0, 3, NULL, NULL);
+INSERT INTO accounts VALUES ('GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H', 999999979999999800, 2, 0, NULL, '', 'AQAAAA==', 0, 2, NULL, NULL, NULL);
+INSERT INTO accounts VALUES ('GC23QF2HUE52AMXUFUH3AYJAXXGXXV2VHXYYR6EYXETPKDXZSAW67XO4', 10000000000, 8589934592, 0, NULL, '', 'AQAAAA==', 0, 2, NULL, NULL, NULL);
+INSERT INTO accounts VALUES ('GCXKG6RN4ONIEPCMNFB732A436Z5PNDSRLGWK7GBLCMQLIFO4S7EYWVU', 9999999800, 8589934594, 2, NULL, '', 'AQAAAA==', 0, 3, NULL, NULL, NULL);
 
 
 --
@@ -351,9 +343,8 @@ INSERT INTO accounts VALUES ('GCXKG6RN4ONIEPCMNFB732A436Z5PNDSRLGWK7GBLCMQLIFO4S
 --
 
 INSERT INTO ledgerheaders VALUES ('63d98f536ee68d1b27b5b89f23af5311b7569a24faf1403ad0b52b633b07be99', '0000000000000000000000000000000000000000000000000000000000000000', '572a2e32ff248a07b0e70fd1f6d318c1facd20b6cc08c33d5775259868125a16', 1, 0, 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABXKi4y/ySKB7DnD9H20xjB+s0gtswIwz1XdSWYaBJaFgAAAAEN4Lazp2QAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAZAX14QAAAABkAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
-INSERT INTO ledgerheaders VALUES ('9ec770723bf10b707756f4a6bbb211c3d9b3eecddf2b6da0de196553a9f8809b', '63d98f536ee68d1b27b5b89f23af5311b7569a24faf1403ad0b52b633b07be99', '69b1ded30c0c7a1fdf5306e16643da099d872904d16d9e447b1195be1e1172f0', 2, 1548955835, 'AAAACmPZj1Nu5o0bJ7W4nyOvUxG3Vpok+vFAOtC1K2M7B76Zu5H9cHd0qAsZj9Q6Y8yIIc6utkf/CO+Lm/0KbsfrzPUAAAAAXFMwuwAAAAIAAAAIAAAAAQAAAAoAAAAIAAAAAwAAJxAAAAAAP0PjS3Rf7hs8xVIBg2g8xKvqOO/n/g/XwgPR/HB7qe9psd7TDAx6H99TBuFmQ9oJnYcpBNFtnkR7EZW+HhFy8AAAAAIN4Lazp2QAAAAAAAAAAADIAAAAAAAAAAAAAAAAAAAAZAX14QAAACcQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
-INSERT INTO ledgerheaders VALUES ('f7c493447b713cc5fbc6459c361a1bb463a7efb10bbde9f4d7c6f78d944a7682', '9ec770723bf10b707756f4a6bbb211c3d9b3eecddf2b6da0de196553a9f8809b', '436fc404665a1aa99c707a7e0115124a0980afe47e42715b35a397ba48a4f05a', 3, 1548955836, 'AAAACp7HcHI78Qtwd1b0pruyEcPZs+7N3yttoN4ZZVOp+ICbyoXR0KM/PdpSGWndceOTFllEosBSx9r+ydaNrImuZ+EAAAAAXFMwvAAAAAAAAAAAqZ+gKTLothY9s7mUE9wPGSzC2wvgaWBDyFO+d3wnDjJDb8QEZloaqZxwen4BFRJKCYCv5H5CcVs1o5e6SKTwWgAAAAMN4Lazp2QAAAAAAAAAAAGQAAAAAAAAAAAAAAAAAAAAZAX14QAAACcQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
-INSERT INTO ledgerheaders VALUES ('4910fcda899eb688c183ca9770d05c362e6cbfa1706dc1606cbb2251497fc7dc', 'f7c493447b713cc5fbc6459c361a1bb463a7efb10bbde9f4d7c6f78d944a7682', 'd66a3c6e70292223343f00291a31f2334e8a674fae9a703d5bd84800f2cbd846', 4, 1548955837, 'AAAACvfEk0R7cTzF+8ZFnDYaG7Rjp++xC73p9NfG942USnaCc/yepBUw3Jvyhzu35p/YgFyDudJv/0g5TgZ7qEwpklsAAAAAXFMwvQAAAAAAAAAA3z9hmASpL9tAVxktxD3XSOp3itxSvEmM6AUkwBS4ERnWajxucCkiIzQ/ACkaMfIzTopnT66acD1b2EgA8svYRgAAAAQN4Lazp2QAAAAAAAAAAAGQAAAAAAAAAAAAAAAAAAAAZAX14QAAACcQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+INSERT INTO ledgerheaders VALUES ('7432efa86301e55aaf0772778f996607a4945206a3afa626ee66eb31d38d4837', '63d98f536ee68d1b27b5b89f23af5311b7569a24faf1403ad0b52b633b07be99', '69b2226ee24347478a171c44c8778d4f3495fba49aa8d36038a3ee6745bdf3bb', 2, 1559579836, 'AAAAC2PZj1Nu5o0bJ7W4nyOvUxG3Vpok+vFAOtC1K2M7B76Zu5H9cHd0qAsZj9Q6Y8yIIc6utkf/CO+Lm/0KbsfrzPUAAAAAXPVMvAAAAAIAAAAIAAAAAQAAAAsAAAAIAAAAAwAPQkAAAAAAP0PjS3Rf7hs8xVIBg2g8xKvqOO/n/g/XwgPR/HB7qe9psiJu4kNHR4oXHETId41PNJX7pJqo02A4o+5nRb3zuwAAAAIN4Lazp2QAAAAAAAAAAADIAAAAAAAAAAAAAAAAAAAAZAX14QAAD0JAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+INSERT INTO ledgerheaders VALUES ('0936020da1ec96a4a0c69e895a9080fd74767067417fe5fb1b0cdecf19fc1ab8', '7432efa86301e55aaf0772778f996607a4945206a3afa626ee66eb31d38d4837', '3f512ddd1f53ac05a81aad7e5b8ebf1d0f18f3c5c593047ae70c2ad14f8a0192', 3, 1559579837, 'AAAAC3Qy76hjAeVarwdyd4+ZZgeklFIGo6+mJu5m6zHTjUg3dXqDplvemlCQM2Eody4ZBZGHd1krjbstYqYhd/Rby1UAAAAAXPVMvQAAAAAAAAAAqZ+gKTLothY9s7mUE9wPGSzC2wvgaWBDyFO+d3wnDjI/US3dH1OsBagarX5bjr8dDxjzxcWTBHrnDCrRT4oBkgAAAAMN4Lazp2QAAAAAAAAAAAGQAAAAAAAAAAAAAAAAAAAAZAX14QAAD0JAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
 
 
 --
@@ -381,49 +372,66 @@ INSERT INTO ledgerheaders VALUES ('4910fcda899eb688c183ca9770d05c362e6cbfa1706dc
 
 
 --
+-- Data for Name: quoruminfo; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
 -- Data for Name: scphistory; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO scphistory VALUES ('GCP42TOFYQ7YZWUL3JTHYOCSX6DEJULXTRZMHV6NXSTQ2L7CEYMSYQGW', 2, 'AAAAAJ/NTcXEP4zai9pmfDhSv4ZE0XeccsPXzbynDS/iJhksAAAAAAAAAAIAAAACAAAAAQAAAEi7kf1wd3SoCxmP1DpjzIghzq62R/8I74ub/Qpux+vM9QAAAABcUzC7AAAAAgAAAAgAAAABAAAACgAAAAgAAAADAAAnEAAAAAAAAAABBnCZizShx+K07X/X1qoGyJsfrYeQ9cwhNm8BYO46wxkAAABAV6GWM61tXNeZ6YBSFCb5gLd3hutqa6yKdn+/9ZNK5w3qQRpV5bu9PV7LLXfdf8B60us9QPtERL5AlekATRYkBw==');
-INSERT INTO scphistory VALUES ('GCP42TOFYQ7YZWUL3JTHYOCSX6DEJULXTRZMHV6NXSTQ2L7CEYMSYQGW', 3, 'AAAAAJ/NTcXEP4zai9pmfDhSv4ZE0XeccsPXzbynDS/iJhksAAAAAAAAAAMAAAACAAAAAQAAADDKhdHQoz892lIZad1x45MWWUSiwFLH2v7J1o2sia5n4QAAAABcUzC8AAAAAAAAAAAAAAABBnCZizShx+K07X/X1qoGyJsfrYeQ9cwhNm8BYO46wxkAAABAuVdUjYAD0gCMXnDOu4910rfk488L6HA2/q1JoEAuHCeBgHfa2aJ3wJEZdUiy8NvIPn/vz8ErrZ4a/ElEHJEXBg==');
-INSERT INTO scphistory VALUES ('GCP42TOFYQ7YZWUL3JTHYOCSX6DEJULXTRZMHV6NXSTQ2L7CEYMSYQGW', 4, 'AAAAAJ/NTcXEP4zai9pmfDhSv4ZE0XeccsPXzbynDS/iJhksAAAAAAAAAAQAAAACAAAAAQAAADBz/J6kFTDcm/KHO7fmn9iAXIO50m//SDlOBnuoTCmSWwAAAABcUzC9AAAAAAAAAAAAAAABBnCZizShx+K07X/X1qoGyJsfrYeQ9cwhNm8BYO46wxkAAABA4W/3UaWjIIjpJXc1EaJqs6KQLaGatH+6KCEgpRwrhdWyJwpHZHyNHgPfFdPe+5gSsFBGo8AZjMl445CJiV8yDw==');
+INSERT INTO scphistory VALUES ('GBJ4IGN5UMNLX74J4GLBB44FFWGMXULYJKU5NAFZCZK6PHNROHYC34SX', 2, 'AAAAAFPEGb2jGrv/ieGWEPOFLYzL0XhKqdaAuRZV552xcfAtAAAAAAAAAAIAAAACAAAAAQAAAEi7kf1wd3SoCxmP1DpjzIghzq62R/8I74ub/Qpux+vM9QAAAABc9Uy8AAAAAgAAAAgAAAABAAAACwAAAAgAAAADAA9CQAAAAAAAAAABBc/MAEUGFFSjJd4Z5WQq+eH+7dSqCr1TUQKlC3gNfQUAAABANpwYYgSyUzriiK5pOT4fkjlpH3gdqNmpEYMp1Bvekq9aFiFDHHH3uIDmq85cs9FnNCibCYirFtIr0S3fIk/fAQ==');
+INSERT INTO scphistory VALUES ('GBJ4IGN5UMNLX74J4GLBB44FFWGMXULYJKU5NAFZCZK6PHNROHYC34SX', 3, 'AAAAAFPEGb2jGrv/ieGWEPOFLYzL0XhKqdaAuRZV552xcfAtAAAAAAAAAAMAAAACAAAAAQAAADB1eoOmW96aUJAzYSh3LhkFkYd3WSuNuy1ipiF39FvLVQAAAABc9Uy9AAAAAAAAAAAAAAABBc/MAEUGFFSjJd4Z5WQq+eH+7dSqCr1TUQKlC3gNfQUAAABA9Z+uUzrpFVeM5bdwOSubQlieCiXWBamGnR4o6bqV8AWAuK/opeM4DQwz9TMW9QWaCvfdKOl3xsa5EDFr7IBICQ==');
 
 
 --
 -- Data for Name: scpquorums; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO scpquorums VALUES ('0670998b34a1c7e2b4ed7fd7d6aa06c89b1fad8790f5cc21366f0160ee3ac319', 4, 'AAAAAQAAAAEAAAAAn81NxcQ/jNqL2mZ8OFK/hkTRd5xyw9fNvKcNL+ImGSwAAAAA');
-
-
---
--- Data for Name: signers; Type: TABLE DATA; Schema: public; Owner: -
---
-
+INSERT INTO scpquorums VALUES ('05cfcc0045061454a325de19e5642af9e1feedd4aa0abd535102a50b780d7d05', 3, 'AAAAAQAAAAEAAAAAU8QZvaMau/+J4ZYQ84UtjMvReEqp1oC5FlXnnbFx8C0AAAAA');
 
 
 --
 -- Data for Name: storestate; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO storestate VALUES ('lastclosedledger                ', '4910fcda899eb688c183ca9770d05c362e6cbfa1706dc1606cbb2251497fc7dc');
+INSERT INTO storestate VALUES ('databaseschema                  ', '10');
+INSERT INTO storestate VALUES ('networkpassphrase               ', 'Test SDF Network ; September 2015');
+INSERT INTO storestate VALUES ('forcescponnextlaunch            ', 'false');
+INSERT INTO storestate VALUES ('ledgerupgrades                  ', '{
+    "time": 0,
+    "version": {
+        "has": false
+    },
+    "fee": {
+        "has": false
+    },
+    "maxtxsize": {
+        "has": false
+    },
+    "reserve": {
+        "has": false
+    }
+}');
+INSERT INTO storestate VALUES ('lastclosedledger                ', '0936020da1ec96a4a0c69e895a9080fd74767067417fe5fb1b0cdecf19fc1ab8');
 INSERT INTO storestate VALUES ('historyarchivestate             ', '{
     "version": 1,
-    "server": "v10.1.0",
-    "currentLedger": 4,
+    "server": "v11.1.0",
+    "currentLedger": 3,
     "currentBuckets": [
         {
-            "curr": "0000000000000000000000000000000000000000000000000000000000000000",
+            "curr": "d3656f6420186a7b97c63b78f5c407f1576d99ceaf5309339f5eab53d29b1308",
             "next": {
                 "state": 0
             },
-            "snap": "5a5381f7457dbfd17d140898bee0eb0cc3f3695cab18dd1b23ba88a450cecf41"
+            "snap": "ef31a20a398ee73ce22275ea8177786bac54656f33dcc4f3fec60d55ddf163d9"
         },
         {
-            "curr": "ef31a20a398ee73ce22275ea8177786bac54656f33dcc4f3fec60d55ddf163d9",
+            "curr": "0000000000000000000000000000000000000000000000000000000000000000",
             "next": {
                 "state": 1,
-                "output": "5a5381f7457dbfd17d140898bee0eb0cc3f3695cab18dd1b23ba88a450cecf41"
+                "output": "ef31a20a398ee73ce22275ea8177786bac54656f33dcc4f3fec60d55ddf163d9"
             },
             "snap": "0000000000000000000000000000000000000000000000000000000000000000"
         },
@@ -492,25 +500,7 @@ INSERT INTO storestate VALUES ('historyarchivestate             ', '{
         }
     ]
 }');
-INSERT INTO storestate VALUES ('lastscpdata                     ', 'AAAAAgAAAACfzU3FxD+M2ovaZnw4Ur+GRNF3nHLD1828pw0v4iYZLAAAAAAAAAAEAAAAAwZwmYs0ocfitO1/19aqBsibH62HkPXMITZvAWDuOsMZAAAAAQAAADBz/J6kFTDcm/KHO7fmn9iAXIO50m//SDlOBnuoTCmSWwAAAABcUzC9AAAAAAAAAAAAAAABAAAAMHP8nqQVMNyb8oc7t+af2IBcg7nSb/9IOU4Ge6hMKZJbAAAAAFxTML0AAAAAAAAAAAAAAEARyuvx8lnWEx1P0UgoPzDBgcZ3lmK5Gmiha95hlsUFlF2oYylX4re+zLpFP5QwmTbrPZhMu+ufITepOAXdNNQBAAAAAJ/NTcXEP4zai9pmfDhSv4ZE0XeccsPXzbynDS/iJhksAAAAAAAAAAQAAAACAAAAAQAAADBz/J6kFTDcm/KHO7fmn9iAXIO50m//SDlOBnuoTCmSWwAAAABcUzC9AAAAAAAAAAAAAAABBnCZizShx+K07X/X1qoGyJsfrYeQ9cwhNm8BYO46wxkAAABA4W/3UaWjIIjpJXc1EaJqs6KQLaGatH+6KCEgpRwrhdWyJwpHZHyNHgPfFdPe+5gSsFBGo8AZjMl445CJiV8yDwAAAAH3xJNEe3E8xfvGRZw2Ghu0Y6fvsQu96fTXxveNlEp2ggAAAAAAAAABAAAAAQAAAAEAAAAAn81NxcQ/jNqL2mZ8OFK/hkTRd5xyw9fNvKcNL+ImGSwAAAAA');
-INSERT INTO storestate VALUES ('databaseschema                  ', '7');
-INSERT INTO storestate VALUES ('networkpassphrase               ', 'Test SDF Network ; September 2015');
-INSERT INTO storestate VALUES ('forcescponnextlaunch            ', 'false');
-INSERT INTO storestate VALUES ('ledgerupgrades                  ', '{
-    "time": 0,
-    "version": {
-        "has": false
-    },
-    "fee": {
-        "has": false
-    },
-    "maxtxsize": {
-        "has": false
-    },
-    "reserve": {
-        "has": false
-    }
-}');
+INSERT INTO storestate VALUES ('lastscpdata                     ', 'AAAAAgAAAABTxBm9oxq7/4nhlhDzhS2My9F4SqnWgLkWVeedsXHwLQAAAAAAAAADAAAAAwXPzABFBhRUoyXeGeVkKvnh/u3Uqgq9U1ECpQt4DX0FAAAAAQAAAJh1eoOmW96aUJAzYSh3LhkFkYd3WSuNuy1ipiF39FvLVQAAAABc9Uy9AAAAAAAAAAEAAAAAU8QZvaMau/+J4ZYQ84UtjMvReEqp1oC5FlXnnbFx8C0AAABArzND55LUdHGo6jjcij57/6mxrOsaGr9Ly4z+iV2mI/U5SFOnT48ZZEjPpiSskD715V4+vI0tbab+B2vqfA8sAAAAAAEAAACYdXqDplvemlCQM2Eody4ZBZGHd1krjbstYqYhd/Rby1UAAAAAXPVMvQAAAAAAAAABAAAAAFPEGb2jGrv/ieGWEPOFLYzL0XhKqdaAuRZV552xcfAtAAAAQK8zQ+eS1HRxqOo43Io+e/+psazrGhq/S8uM/oldpiP1OUhTp0+PGWRIz6YkrJA+9eVePryNLW2m/gdr6nwPLAAAAABAInShh5nj3I2wjrnx41caB3S1Dcvofe1A7Tpf/0TEoUrCCq1Y0bFUFv7EqoNGKy5CTX6YAntgV3TNNNGx4WZ+DQAAAABTxBm9oxq7/4nhlhDzhS2My9F4SqnWgLkWVeedsXHwLQAAAAAAAAADAAAAAgAAAAEAAAAwdXqDplvemlCQM2Eody4ZBZGHd1krjbstYqYhd/Rby1UAAAAAXPVMvQAAAAAAAAAAAAAAAQXPzABFBhRUoyXeGeVkKvnh/u3Uqgq9U1ECpQt4DX0FAAAAQPWfrlM66RVXjOW3cDkrm0JYngol1gWphp0eKOm6lfAFgLiv6KXjOA0MM/UzFvUFmgr33Sjpd8bGuRAxa+yASAkAAAABdDLvqGMB5VqvB3J3j5lmB6SUUgajr6Ym7mbrMdONSDcAAAACAAAAAK6jei3jmoI8TGlD/egc37PXtHKKzWV8wViZBaCu5L5MAAAAZAAAAAIAAAACAAAAAAAAAAAAAAABAAAAAAAAAAYAAAABVVNEMgAAAAC1uBdHoTugMvQtD7BhIL3Ne9dVPfGI+Ji5JvUO+ZAt73//////////AAAAAAAAAAGu5L5MAAAAQFIuyQo5bQLTEoP2UHNr/GyjDMHoqL9x3Zvsfw/Nz6c6pYtnWfb/TyhwkTctbte/EF0zzmevTiTz3COG3vJgWwoAAAAArqN6LeOagjxMaUP96Bzfs9e0corNZXzBWJkFoK7kvkwAAABkAAAAAgAAAAEAAAAAAAAAAAAAAAEAAAAAAAAABgAAAAFVU0QxAAAAALW4F0ehO6Ay9C0PsGEgvc1711U98Yj4mLkm9Q75kC3vf/////////8AAAAAAAAAAa7kvkwAAABAlnxa5Z5su4ezAE1OQOcKgCguO9e1poqNj/bmON3IebZNmeh48q6uvJ10Y9OES5jsZhEnKZ1aSI6oN+cM+nQ0BgAAAAEAAAABAAAAAQAAAABTxBm9oxq7/4nhlhDzhS2My9F4SqnWgLkWVeedsXHwLQAAAAA=');
 
 
 --
@@ -545,8 +535,8 @@ INSERT INTO txhistory VALUES ('373bb9329939fdb7d4448e72b01a4063e350b04a6c0f0434b
 -- Data for Name: upgradehistory; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO upgradehistory VALUES (2, 1, 'AAAAAQAAAAo=', 'AAAAAA==');
-INSERT INTO upgradehistory VALUES (2, 2, 'AAAAAwAAJxA=', 'AAAAAA==');
+INSERT INTO upgradehistory VALUES (2, 1, 'AAAAAQAAAAs=', 'AAAAAA==');
+INSERT INTO upgradehistory VALUES (2, 2, 'AAAAAwAPQkA=', 'AAAAAA==');
 
 
 --
@@ -622,19 +612,19 @@ ALTER TABLE ONLY pubsub
 
 
 --
+-- Name: quoruminfo quoruminfo_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY quoruminfo
+    ADD CONSTRAINT quoruminfo_pkey PRIMARY KEY (nodeid);
+
+
+--
 -- Name: scpquorums scpquorums_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY scpquorums
     ADD CONSTRAINT scpquorums_pkey PRIMARY KEY (qsethash);
-
-
---
--- Name: signers signers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY signers
-    ADD CONSTRAINT signers_pkey PRIMARY KEY (accountid, publickey);
 
 
 --
@@ -685,10 +675,10 @@ CREATE INDEX accountbalances ON accounts USING btree (balance) WHERE (balance >=
 
 
 --
--- Name: buyingissuerindex; Type: INDEX; Schema: public; Owner: -
+-- Name: bestofferindex; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX buyingissuerindex ON offers USING btree (buyingissuer);
+CREATE INDEX bestofferindex ON offers USING btree (sellingasset, buyingasset, price);
 
 
 --
@@ -713,13 +703,6 @@ CREATE INDEX ledgersbyseq ON ledgerheaders USING btree (ledgerseq);
 
 
 --
--- Name: priceindex; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX priceindex ON offers USING btree (price);
-
-
---
 -- Name: scpenvsbyseq; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -731,20 +714,6 @@ CREATE INDEX scpenvsbyseq ON scphistory USING btree (ledgerseq);
 --
 
 CREATE INDEX scpquorumsbyseq ON scpquorums USING btree (lastledgerseq);
-
-
---
--- Name: sellingissuerindex; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX sellingissuerindex ON offers USING btree (sellingissuer);
-
-
---
--- Name: signersaccount; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX signersaccount ON signers USING btree (accountid);
 
 
 --

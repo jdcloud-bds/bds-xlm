@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"context"
 	"fmt"
 	"mime"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"github.com/stellar/go/amount"
 	"github.com/stellar/go/services/horizon/internal/assets"
 	"github.com/stellar/go/services/horizon/internal/db2"
+	"github.com/stellar/go/services/horizon/internal/httpx"
 	"github.com/stellar/go/services/horizon/internal/ledger"
 	hProblem "github.com/stellar/go/services/horizon/internal/render/problem"
 	"github.com/stellar/go/services/horizon/internal/toid"
@@ -21,6 +23,8 @@ import (
 	"github.com/stellar/go/xdr"
 )
 
+// TODO: move these constants to urlparam.go as we should parse the params with http handlers
+// in the upper level package.
 const (
 	// ParamCursor is a query string param name
 	ParamCursor = "cursor"
@@ -48,14 +52,13 @@ func (base *Base) GetCursor(name string) string {
 	}
 
 	cursor := base.GetString(name)
-
 	if cursor == "now" {
 		tid := toid.AfterLedger(ledger.CurrentState().HistoryLatest)
 		cursor = tid.String()
 	}
 
-	if lei := base.R.Header.Get("Last-Event-ID"); lei != "" {
-		cursor = lei
+	if lastEventID := base.R.Header.Get("Last-Event-ID"); lastEventID != "" {
+		cursor = lastEventID
 	}
 
 	// In case cursor is negative value, return InvalidField error
@@ -76,6 +79,27 @@ func (base *Base) checkUTF8(name, value string) {
 	}
 }
 
+// GetStringFromURLParam retrieves a string from the URLParams.
+func (base *Base) GetStringFromURLParam(name string) string {
+	if base.Err != nil {
+		return ""
+	}
+
+	fromURL, ok := base.GetURLParam(name)
+	if ok {
+		ret, err := url.PathUnescape(fromURL)
+		if err != nil {
+			base.SetInvalidField(name, err)
+			return ""
+		}
+
+		base.checkUTF8(name, ret)
+		return ret
+	}
+
+	return ""
+}
+
 // GetString retrieves a string from either the URLParams, form or query string.
 // This method uses the priority (URLParams, Form, Query).
 func (base *Base) GetString(name string) string {
@@ -84,7 +108,6 @@ func (base *Base) GetString(name string) string {
 	}
 
 	fromURL, ok := base.GetURLParam(name)
-
 	if ok {
 		ret, err := url.PathUnescape(fromURL)
 		if err != nil {
@@ -97,7 +120,6 @@ func (base *Base) GetString(name string) string {
 	}
 
 	fromForm := base.R.FormValue(name)
-
 	if fromForm != "" {
 		base.checkUTF8(name, fromForm)
 		return fromForm
@@ -116,13 +138,11 @@ func (base *Base) GetInt64(name string) int64 {
 	}
 
 	asStr := base.GetString(name)
-
 	if asStr == "" {
 		return 0
 	}
 
 	asI64, err := strconv.ParseInt(asStr, 10, 64)
-
 	if err != nil {
 		base.SetInvalidField(name, errors.New("unparseable value"))
 		return 0
@@ -139,19 +159,42 @@ func (base *Base) GetInt32(name string) int32 {
 	}
 
 	asStr := base.GetString(name)
-
 	if asStr == "" {
 		return 0
 	}
 
 	asI64, err := strconv.ParseInt(asStr, 10, 32)
-
 	if err != nil {
 		base.SetInvalidField(name, errors.New("unparseable value"))
 		return 0
 	}
 
 	return int32(asI64)
+}
+
+// GetBool retrieves a bool from the query parameter for the given name.
+// Populates err if the value is not a valid bool.
+// Defaults to `false` in case of an empty string. WARNING, do not change
+// this behaviour without checking other modules, ex. this is critical
+// that failed transactions are not included (`false`) by default.
+func (base *Base) GetBool(name string) bool {
+	if base.Err != nil {
+		return false
+	}
+
+	asStr := base.R.URL.Query().Get(name)
+	if asStr == "" {
+		return false
+	}
+
+	if asStr == "true" {
+		return true
+	} else if asStr == "false" || asStr == "" {
+		return false
+	} else {
+		base.SetInvalidField(name, errors.New("unparseable value"))
+		return false
+	}
 }
 
 // GetLimit retrieves a uint64 limit from the action parameter of the given
@@ -163,13 +206,11 @@ func (base *Base) GetLimit(name string, def uint64, max uint64) uint64 {
 	}
 
 	limit := base.GetString(name)
-
 	if limit == "" {
 		return def
 	}
 
 	asI64, err := strconv.ParseInt(limit, 10, 64)
-
 	if err != nil {
 		base.SetInvalidField(name, errors.New("unparseable value"))
 		return 0
@@ -177,9 +218,7 @@ func (base *Base) GetLimit(name string, def uint64, max uint64) uint64 {
 
 	if asI64 <= 0 {
 		err = errors.New("invalid limit: non-positive value provided")
-	}
-
-	if asI64 > int64(max) {
+	} else if asI64 > int64(max) {
 		err = errors.Errorf("invalid limit: value provided that is over limit max of %d", max)
 	}
 
@@ -233,20 +272,18 @@ func (base *Base) GetAddress(name string, opts ...Opt) (result string) {
 
 	requiredParam := false
 	for _, opt := range opts {
-		switch opt {
-		case RequiredParam:
+		if opt == RequiredParam {
 			requiredParam = true
 		}
 	}
 
+	// We should check base.Err after this call. This is why it's better to remove base.Err.
 	result = base.GetString(name)
-
 	if result == "" && !requiredParam {
 		return result
 	}
 
 	_, err := strkey.Decode(strkey.VersionByteAccountID, result)
-
 	if err != nil {
 		base.SetInvalidField(name, errors.New("invalid address"))
 	}
@@ -262,7 +299,6 @@ func (base *Base) GetAccountID(name string) (result xdr.AccountId) {
 	}
 
 	raw, err := strkey.Decode(strkey.VersionByteAccountID, base.GetString(name))
-
 	if err != nil {
 		base.SetInvalidField(name, errors.New("invalid address"))
 		return
@@ -290,7 +326,6 @@ func (base *Base) GetAmount(name string) (result xdr.Int64) {
 
 	var err error
 	result, err = amount.Parse(base.GetString(name))
-
 	if err != nil {
 		base.SetInvalidField(name, errors.New("invalid amount"))
 		return
@@ -308,7 +343,6 @@ func (base *Base) GetPositiveAmount(name string) (result xdr.Int64) {
 	}
 
 	result = base.GetAmount(name)
-
 	if result <= 0 {
 		base.SetInvalidField(name, errors.New("Value must be positive"))
 		return xdr.Int64(0)
@@ -323,12 +357,12 @@ func (base *Base) GetAssetType(name string) xdr.AssetType {
 		return xdr.AssetTypeAssetTypeNative
 	}
 
-	r, err := assets.Parse(base.GetString(name))
-
+	val := base.GetString(name)
 	if base.Err != nil {
 		return xdr.AssetTypeAssetTypeNative
 	}
 
+	r, err := assets.Parse(val)
 	if err != nil {
 		base.SetInvalidField(name, err)
 	}
@@ -343,8 +377,8 @@ func (base *Base) GetAsset(prefix string) (result xdr.Asset) {
 	if base.Err != nil {
 		return
 	}
-	var value interface{}
 
+	var value interface{}
 	t := base.GetAssetType(prefix + "asset_type")
 
 	switch t {
@@ -378,6 +412,7 @@ func (base *Base) GetAsset(prefix string) (result xdr.Asset) {
 	if err != nil {
 		panic(err)
 	}
+
 	return
 }
 
@@ -404,13 +439,11 @@ func (base *Base) GetTimeMillis(name string) (timeMillis time.Millis) {
 	}
 
 	asStr := base.GetString(name)
-
 	if asStr == "" {
 		return
 	}
 
 	timeMillis, err := time.MillisFromString(asStr)
-
 	if err != nil {
 		base.SetInvalidField(name, err)
 		return
@@ -431,6 +464,7 @@ func (base *Base) GetURLParam(key string) (string, bool) {
 			return rctx.URLParams.Values[k], true
 		}
 	}
+
 	return "", false
 }
 
@@ -450,24 +484,29 @@ func (base *Base) Path() string {
 //  is not `application/x-www-form-urlencoded`
 func (base *Base) ValidateBodyType() {
 	c := base.R.Header.Get("Content-Type")
-
 	if c == "" {
 		return
 	}
 
 	mt, _, err := mime.ParseMediaType(c)
-
 	if err != nil {
 		base.Err = err
 		return
 	}
 
-	switch {
-	case mt == "application/x-www-form-urlencoded":
-		return
-	case mt == "multipart/form-data":
-		return
-	default:
+	if mt != "application/x-www-form-urlencoded" && mt != "multipart/form-data" {
 		base.Err = &hProblem.UnsupportedMediaType
 	}
+}
+
+// fullURL returns a URL containing the information regarding the original
+// request stored in the context.
+func fullURL(ctx context.Context) *url.URL {
+	url := httpx.BaseURL(ctx)
+	r := httpx.RequestFromContext(ctx)
+	if r != nil {
+		url.Path = r.URL.Path
+		url.RawQuery = r.URL.RawQuery
+	}
+	return url
 }

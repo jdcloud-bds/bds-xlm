@@ -15,15 +15,22 @@ type Config struct {
 	StellarCoreDatabaseURL string
 	StellarCoreURL         string
 	Port                   uint
-	MaxDBConnections       int
-	SSEUpdateFrequency     time.Duration
-	ConnectionTimeout      time.Duration
-	RateLimit              *throttled.RateQuota
-	RateLimitRedisKey      string
-	RedisURL               string
-	FriendbotURL           *url.URL
-	LogLevel               logrus.Level
-	LogFile                string
+
+	// MaxDBConnections has a priority over all 4 values below.
+	MaxDBConnections            int
+	HorizonDBMaxOpenConnections int
+	HorizonDBMaxIdleConnections int
+	CoreDBMaxOpenConnections    int
+	CoreDBMaxIdleConnections    int
+
+	SSEUpdateFrequency time.Duration
+	ConnectionTimeout  time.Duration
+	RateQuota          *throttled.RateQuota
+	RateLimitRedisKey  string
+	RedisURL           string
+	FriendbotURL       *url.URL
+	LogLevel           logrus.Level
+	LogFile            string
 	// MaxPathLength is the maximum length of the path returned by `/paths` endpoint.
 	MaxPathLength     uint
 	NetworkPassphrase string
@@ -36,6 +43,13 @@ type Config struct {
 	TLSKey string
 	// Ingest toggles whether this horizon instance should run the data ingestion subsystem.
 	Ingest bool
+	// IngestFailedTransactions toggles whether to ingest failed transactions
+	IngestFailedTransactions bool
+	// CursorName is the cursor used for ingesting from stellar-core.
+	// Setting multiple cursors in different Horizon instances allows multiple
+	// Horizons to ingest from the same stellar-core instance without cursor
+	// collisions.
+	CursorName string
 	// HistoryRetentionCount represents the minimum number of ledgers worth of
 	// history data to retain in the horizon database. For the purposes of
 	// determining a "retention duration", each ledger roughly corresponds to 10
@@ -53,4 +67,9 @@ type Config struct {
 	// Enabling it has a negative impact on CPU when ingesting ledgers full of
 	// many different assets related operations.
 	EnableAssetStats bool
+
+	Kafka          bool
+	KafkaProxyHost string
+	KafkaProxyPort uint
+	KafkaTopic     string
 }

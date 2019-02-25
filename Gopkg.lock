@@ -40,16 +40,6 @@
   revision = "20f192218cf52a73397fa2df45bdda720f3e47c8"
 
 [[projects]]
-  digest = "1:99851d69cfb33fc9e027ae5190748dfca08457942386a3359abd42ef0d73d20f"
-  name = "github.com/agl/ed25519"
-  packages = [
-    ".",
-    "edwards25519",
-  ]
-  pruneopts = "T"
-  revision = "278e1ec8e8a6e017cd07577924d6766039146ced"
-
-[[projects]]
   branch = "master"
   digest = "1:0f58bf4103da77bfd026185b49755f4cd020fec4f12657ea4609d9de4593513c"
   name = "github.com/ajg/form"
@@ -282,6 +272,29 @@
   revision = "9235644dd9e52eeae6fa48efd539fdc351a0af53"
 
 [[projects]]
+  branch = "master"
+  digest = "1:5cd75acef421262dbd1d2d15dc1b3859e43c78f13046a0c3b468386e215a28e5"
+  name = "github.com/graph-gophers/graphql-go"
+  packages = [
+    ".",
+    "errors",
+    "internal/common",
+    "internal/exec",
+    "internal/exec/packer",
+    "internal/exec/resolvable",
+    "internal/exec/selected",
+    "internal/query",
+    "internal/schema",
+    "internal/validation",
+    "introspection",
+    "log",
+    "relay",
+    "trace",
+  ]
+  pruneopts = "T"
+  revision = "3e8838d4614c12ab337e796548521744f921e05d"
+
+[[projects]]
   digest = "1:1645a00815964b8746574a5688974d9e6285519bb053ea06b0758729eb5b2942"
   name = "github.com/guregu/null"
   packages = ["."]
@@ -441,6 +454,14 @@
   revision = "efea85cb9a06f1d4f661649f6beb5fd04597a366"
 
 [[projects]]
+  digest = "1:5d231480e1c64a726869bc4142d270184c419749d34f167646baa21008eb0a79"
+  name = "github.com/mitchellh/go-homedir"
+  packages = ["."]
+  pruneopts = "T"
+  revision = "af06845cf3004701891bf4fdb884bfe4920b3727"
+  version = "v1.1.0"
+
+[[projects]]
   digest = "1:922a47edb4c9b30c8d1e55ececa4fc35c791cccfac6b810c5155fc3a65751597"
   name = "github.com/mitchellh/mapstructure"
   packages = ["."]
@@ -509,6 +530,18 @@
   ]
   pruneopts = "T"
   revision = "649b44d988ce182cabcda7dba01fcf3b6179ad19"
+
+[[projects]]
+  digest = "1:a88448fcd2802025fa764388e12f31f0a64d5d436b369a71b97a6c9da783fafe"
+  name = "github.com/opentracing/opentracing-go"
+  packages = [
+    ".",
+    "ext",
+    "log",
+  ]
+  pruneopts = "T"
+  revision = "659c90643e714681897ec2521c60567dd21da733"
+  version = "v1.1.0"
 
 [[projects]]
   digest = "1:40e195917a951a8bf867cd05de2a46aaf1806c50cf92eebf4c16f78cd196f747"
@@ -588,14 +621,14 @@
   revision = "83532ca1c1caa393179c677b6facf48e61f4ca5d"
 
 [[projects]]
-  digest = "1:f4144e2638d1a213dc42fc7a7242d48285cbce7ada079f475c96920731b999b0"
+  digest = "1:39553373857c2f3d484b9e1e4474bf6f21a795fe14fe6b941362ee6b266416f3"
   name = "github.com/sirupsen/logrus"
   packages = [
     ".",
     "hooks/test",
   ]
   pruneopts = "T"
-  revision = "68cec9f21fbf3ea8d8f98c044bc6ce05f17b267a"
+  revision = "070c81def33f6362a8267b6a4e56fb7bf23fc6b5"
 
 [[projects]]
   digest = "1:e4ea18b52dd9211e7e7b551ecaef4c49c274b2d9d5df4a46f70a03281a8b3c45"
@@ -748,15 +781,17 @@
   revision = "d1c525dea8ce39ea9a783d33cf08932305373f2c"
 
 [[projects]]
-  digest = "1:0f2b2cb9f84318c0f71fed3087ff9ac370370f842469b71b00348c3d72a19b44"
+  digest = "1:214dc62bc053a6f4f7e4cb6c6393920fcc213c80994a7725fcb35974992d7ccd"
   name = "golang.org/x/crypto"
   packages = [
+    "ed25519",
+    "ed25519/internal/edwards25519",
     "pbkdf2",
     "ripemd160",
     "ssh/terminal",
   ]
   pruneopts = "T"
-  revision = "1f22c0103821b9390939b6776727195525381532"
+  revision = "7f87c0fbb88b590338857bcb720678c2583d4dea"
 
 [[projects]]
   digest = "1:a18644706c9badac05ff6618845384817a90a33b6cb79a7a0bdafaac6ef7e563"
@@ -777,11 +812,14 @@
   revision = "9bc2a3340c92c17a20edcd0080e93851ed58f5d5"
 
 [[projects]]
-  digest = "1:85c277bcba5f673644793cd86ccca4b366d938e4706c04be7222f6f643a683bb"
+  digest = "1:0e2d0a79d5d135022a0733fa902d8c338871a5112035acd34774f62412b92573"
   name = "golang.org/x/sys"
-  packages = ["unix"]
+  packages = [
+    "unix",
+    "windows",
+  ]
   pruneopts = "T"
-  revision = "1f5e250e1174502017917628cc48b52fdc25b531"
+  revision = "cc5685c2db1239775905f3911f0067c0fa74762f"
 
 [[projects]]
   digest = "1:e75680071853b8e66b993f3b108eac3aa925432a4d2fb0205f6cb6422def925e"
@@ -868,7 +906,6 @@
     "bitbucket.org/ww/goautoneg",
     "github.com/BurntSushi/toml",
     "github.com/Masterminds/squirrel",
-    "github.com/agl/ed25519",
     "github.com/asaskevich/govalidator",
     "github.com/aws/aws-sdk-go/aws",
     "github.com/aws/aws-sdk-go/aws/session",
@@ -891,6 +928,8 @@
     "github.com/go-sql-driver/mysql",
     "github.com/goji/httpauth",
     "github.com/gomodule/redigo/redis",
+    "github.com/graph-gophers/graphql-go",
+    "github.com/graph-gophers/graphql-go/relay",
     "github.com/guregu/null",
     "github.com/haltingstate/secp256k1-go",
     "github.com/howeyc/gopass",
@@ -900,6 +939,7 @@
     "github.com/lib/pq",
     "github.com/manucorporat/sse",
     "github.com/mattn/go-sqlite3",
+    "github.com/mitchellh/go-homedir",
     "github.com/onsi/ginkgo",
     "github.com/onsi/ginkgo/extensions/table",
     "github.com/onsi/gomega",
@@ -923,6 +963,7 @@
     "github.com/throttled/throttled",
     "github.com/tyler-smith/go-bip32",
     "github.com/tyler-smith/go-bip39",
+    "golang.org/x/crypto/ed25519",
     "golang.org/x/net/http2",
     "gopkg.in/gavv/httpexpect.v1",
     "gopkg.in/tylerb/graceful.v1",

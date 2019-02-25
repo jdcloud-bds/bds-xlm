@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/guregu/null"
+	. "github.com/stellar/go/protocols/horizon"
 	"github.com/stellar/go/services/horizon/internal/db2/history"
 	"github.com/stellar/go/services/horizon/internal/httpx"
-	. "github.com/stellar/go/protocols/horizon"
 	"github.com/stellar/go/support/render/hal"
 )
 
@@ -18,16 +18,25 @@ func PopulateTransaction(
 	ctx context.Context,
 	dest *Transaction,
 	row history.Transaction,
-) (err error) {
-
+) {
 	dest.ID = row.TransactionHash
 	dest.PT = row.PagingToken()
+	// Check db2/history.Transaction.Successful field comment for more information.
+	if row.Successful == nil {
+		dest.Successful = true
+	} else {
+		dest.Successful = *row.Successful
+	}
 	dest.Hash = row.TransactionHash
 	dest.Ledger = row.LedgerSequence
 	dest.LedgerCloseTime = row.LedgerCloseTime
 	dest.Account = row.Account
 	dest.AccountSequence = row.AccountSequence
-	dest.FeePaid = row.FeePaid
+	dest.FeePaid = row.FeeCharged
+
+	dest.FeeCharged = row.FeeCharged
+	dest.MaxFee = row.MaxFee
+
 	dest.OperationCount = row.OperationCount
 	dest.EnvelopeXdr = row.TxEnvelope
 	dest.ResultXdr = row.TxResult
@@ -47,9 +56,7 @@ func PopulateTransaction(
 	dest.Links.Self = lb.Link("/transactions", dest.ID)
 	dest.Links.Succeeds = lb.Linkf("/transactions?order=desc&cursor=%s", dest.PT)
 	dest.Links.Precedes = lb.Linkf("/transactions?order=asc&cursor=%s", dest.PT)
-	return
 }
-
 
 func timeString(res *Transaction, in null.Int) string {
 	if !in.Valid {

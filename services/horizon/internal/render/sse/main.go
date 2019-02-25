@@ -31,12 +31,10 @@ type Eventable interface {
 }
 
 // WritePreamble prepares this http connection for streaming using Server Sent
-// Events.  It sends the initial http response with the appropriate headers to
+// Events. It sends the initial http response with the appropriate headers to
 // do so.
 func WritePreamble(ctx context.Context, w http.ResponseWriter) bool {
-
 	_, flushable := w.(http.Flusher)
-
 	if !flushable {
 		//TODO: render a problem struct instead of simple string
 		http.Error(w, "Streaming Not Supported", http.StatusBadRequest)
@@ -58,7 +56,7 @@ func WritePreamble(ctx context.Context, w http.ResponseWriter) bool {
 // sending it over the provided ResponseWriter and flushing.
 func WriteEvent(ctx context.Context, w http.ResponseWriter, e Event) {
 	if e.Error != nil {
-		fmt.Fprint(w, "event: err\n")
+		fmt.Fprint(w, "event: error\n")
 		fmt.Fprintf(w, "data: %s\n\n", e.Error.Error())
 		w.(http.Flusher).Flush()
 		return

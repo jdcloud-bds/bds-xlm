@@ -11,29 +11,32 @@ import (
 	"time"
 
 	"github.com/gomodule/redigo/redis"
-	"github.com/rcrowley/go-metrics"
+	metrics "github.com/rcrowley/go-metrics"
 	"github.com/stellar/go/clients/stellarcore"
 	horizonContext "github.com/stellar/go/services/horizon/internal/context"
 	"github.com/stellar/go/services/horizon/internal/db2/core"
 	"github.com/stellar/go/services/horizon/internal/db2/history"
 	"github.com/stellar/go/services/horizon/internal/ingest"
 	"github.com/stellar/go/services/horizon/internal/ledger"
+	"github.com/stellar/go/services/horizon/internal/logmetrics"
 	"github.com/stellar/go/services/horizon/internal/operationfeestats"
 	"github.com/stellar/go/services/horizon/internal/paths"
 	"github.com/stellar/go/services/horizon/internal/reap"
+	"github.com/stellar/go/services/horizon/internal/simplepath"
 	"github.com/stellar/go/services/horizon/internal/txsub"
 	"github.com/stellar/go/support/app"
 	"github.com/stellar/go/support/db"
+	"github.com/stellar/go/support/errors"
 	"github.com/stellar/go/support/log"
 	"github.com/throttled/throttled"
 	"golang.org/x/net/http2"
-	"gopkg.in/tylerb/graceful.v1"
+	graceful "gopkg.in/tylerb/graceful.v1"
 )
 
 // App represents the root of the state of a horizon instance.
 type App struct {
 	config                       Config
-	web                          *Web
+	web                          *web
 	historyQ                     *history.Q
 	coreQ                        *core.Q
 	ctx                          context.Context
@@ -60,19 +63,20 @@ type App struct {
 }
 
 // NewApp constructs an new App instance from the provided config.
-func NewApp(config Config) (*App, error) {
+func NewApp(config Config) *App {
+	a := &App{
+		config:         config,
+		horizonVersion: app.Version(),
+		ticks:          time.NewTicker(1 * time.Second),
+	}
 
-	result := &App{config: config}
-	result.horizonVersion = app.Version()
-	result.ticks = time.NewTicker(1 * time.Second)
-	result.init()
-	return result, nil
+	a.init()
+	return a
 }
 
 // Serve starts the horizon web server, binding it to a socket, setting up
 // the shutdown signals.
 func (a *App) Serve() {
-
 	http.Handle("/", a.web.router)
 
 	addr := fmt.Sprintf(":%d", a.config.Port)
@@ -94,7 +98,10 @@ func (a *App) Serve() {
 
 	http2.ConfigureServer(srv.Server, nil)
 
-	log.Infof("Starting horizon on %s (ingest: %v)", addr, a.config.Ingest)
+	log.Infof("Starting horizon on %s (ingest: %v, kafka: %v)", addr, a.config.Ingest, a.config.Kafka)
+	if a.config.Kafka {
+		log.Infof("The kafka information is (kafka-proxy-host: %v, kafka-proxy-port: %v, kafka-topic: %v)", a.config.KafkaProxyHost, a.config.KafkaProxyPort, a.config.KafkaTopic)
+	}
 
 	go a.run()
 
@@ -166,47 +173,57 @@ func (a *App) IsHistoryStale() bool {
 // UpdateLedgerState triggers a refresh of several metrics gauges, such as open
 // db connections and ledger state
 func (a *App) UpdateLedgerState() {
-	var err error
 	var next ledger.State
 
-	err = a.CoreQ().LatestLedger(&next.CoreLatest)
+	logErr := func(err error, msg string) {
+		log.WithStack(err).WithField("err", err.Error()).Error(msg)
+	}
+
+	err := a.CoreQ().LatestLedger(&next.CoreLatest)
 	if err != nil {
-		goto Failed
+		logErr(err, "failed to load the latest known ledger state from core DB")
+		return
 	}
 
 	err = a.HistoryQ().LatestLedger(&next.HistoryLatest)
 	if err != nil {
-		goto Failed
+		logErr(err, "failed to load the latest known ledger state from history DB")
+		return
 	}
 
 	err = a.HistoryQ().ElderLedger(&next.HistoryElder)
 	if err != nil {
-		goto Failed
+		logErr(err, "failed to load the oldest known ledger state from history DB")
+		return
 	}
 
 	ledger.SetState(next)
-	return
-
-Failed:
-	log.WithStack(err).
-		WithField("err", err.Error()).
-		Error("failed to load ledger state")
-
 }
 
-// UpdateOperationFeeStatsState triggers a refresh of several operation fee metrics
+// UpdateOperationFeeStatsState triggers a refresh of several operation fee metrics.
 func (a *App) UpdateOperationFeeStatsState() {
-	var err error
-	var next operationfeestats.State
+	var (
+		next          operationfeestats.State
+		latest        history.LatestLedger
+		feeStats      history.FeeStats
+		capacityStats history.LedgerCapacityUsageStats
+	)
 
-	var latest history.LatestLedger
-	var feeStats history.FeeStats
+	logErr := func(err error, msg string) {
+		// If DB is empty ignore the error
+		if errors.Cause(err) == sql.ErrNoRows {
+			return
+		}
+
+		log.WithStack(err).WithField("err", err.Error()).Error(msg)
+	}
 
 	cur := operationfeestats.CurrentState()
 
-	err = a.HistoryQ().LatestLedgerBaseFeeAndSequence(&latest)
+	err := a.HistoryQ().LatestLedgerBaseFeeAndSequence(&latest)
 	if err != nil {
-		goto Failed
+		logErr(err, "failed to load the latest known ledger's base fee and sequence number")
+		return
 	}
 
 	// finish early if no new ledgers
@@ -217,45 +234,61 @@ func (a *App) UpdateOperationFeeStatsState() {
 	next.LastBaseFee = int64(latest.BaseFee)
 	next.LastLedger = int64(latest.Sequence)
 
-	err = a.HistoryQ().TransactionsForLastXLedgers(latest.Sequence, &feeStats)
+	err = a.HistoryQ().OperationFeeStats(latest.Sequence, &feeStats)
 	if err != nil {
-		goto Failed
+		logErr(err, "failed to load operation fee stats")
+		return
 	}
 
-	// if no transactions in last X ledgers, return
+	err = a.HistoryQ().LedgerCapacityUsageStats(latest.Sequence, &capacityStats)
+	if err != nil {
+		logErr(err, "failed to load ledger capacity usage stats")
+		return
+	}
+
+	next.LedgerCapacityUsage = capacityStats.CapacityUsage.String
+
+	// if no transactions in last 5 ledgers, return
 	// latest ledger's base fee for all
 	if !feeStats.Mode.Valid && !feeStats.Min.Valid {
-		next.Min = next.LastBaseFee
-		next.Mode = next.LastBaseFee
+		next.FeeMin = next.LastBaseFee
+		next.FeeMode = next.LastBaseFee
+		next.FeeP10 = next.LastBaseFee
+		next.FeeP20 = next.LastBaseFee
+		next.FeeP30 = next.LastBaseFee
+		next.FeeP40 = next.LastBaseFee
+		next.FeeP50 = next.LastBaseFee
+		next.FeeP60 = next.LastBaseFee
+		next.FeeP70 = next.LastBaseFee
+		next.FeeP80 = next.LastBaseFee
+		next.FeeP90 = next.LastBaseFee
+		next.FeeP95 = next.LastBaseFee
+		next.FeeP99 = next.LastBaseFee
 	} else {
-		next.Min = feeStats.Min.Int64
-		next.Mode = feeStats.Mode.Int64
+		next.FeeMin = feeStats.Min.Int64
+		next.FeeMode = feeStats.Mode.Int64
+		next.FeeP10 = feeStats.P10.Int64
+		next.FeeP20 = feeStats.P20.Int64
+		next.FeeP30 = feeStats.P30.Int64
+		next.FeeP40 = feeStats.P40.Int64
+		next.FeeP50 = feeStats.P50.Int64
+		next.FeeP60 = feeStats.P60.Int64
+		next.FeeP70 = feeStats.P70.Int64
+		next.FeeP80 = feeStats.P80.Int64
+		next.FeeP90 = feeStats.P90.Int64
+		next.FeeP95 = feeStats.P95.Int64
+		next.FeeP99 = feeStats.P99.Int64
 	}
 
 	operationfeestats.SetState(next)
-	return
-
-Failed:
-	// If DB is empty ignore the error
-	if err == sql.ErrNoRows {
-		return
-	}
-
-	log.WithStack(err).
-		WithField("err", err.Error()).
-		Error("failed to load operation fee stats state")
-
 }
 
-// UpdateStellarCoreInfo updates the value of coreVersion and networkPassphrase
-// from the Stellar core API.
+// UpdateStellarCoreInfo updates the value of coreVersion,
+// currentProtocolVersion, and coreSupportedProtocolVersion from the Stellar
+// core API.
 func (a *App) UpdateStellarCoreInfo() {
 	if a.config.StellarCoreURL == "" {
 		return
-	}
-
-	fail := func(err error) {
-		log.Warnf("could not load stellar-core info: %s", err)
 	}
 
 	core := &stellarcore.Client{
@@ -263,9 +296,8 @@ func (a *App) UpdateStellarCoreInfo() {
 	}
 
 	resp, err := core.Info(context.Background())
-
 	if err != nil {
-		fail(err)
+		log.Warnf("could not load stellar-core info: %s", err)
 		return
 	}
 
@@ -281,7 +313,6 @@ func (a *App) UpdateStellarCoreInfo() {
 	}
 
 	a.coreVersion = resp.Info.Build
-
 	a.currentProtocolVersion = int32(resp.Info.Ledger.Version)
 	a.coreSupportedProtocolVersion = int32(resp.Info.ProtocolVersion)
 }
@@ -334,7 +365,72 @@ func (a *App) Tick() {
 // Init initializes app, using the config to populate db connections and
 // whatnot.
 func (a *App) init() {
-	appInit.Run(a)
+	// app-context
+	a.ctx, a.cancel = context.WithCancel(context.Background())
+
+	// log
+	log.DefaultLogger.Logger.Level = a.config.LogLevel
+	log.DefaultLogger.Logger.Hooks.Add(logmetrics.DefaultMetrics)
+
+	// sentry
+	initSentry(a)
+
+	// loggly
+	initLogglyLog(a)
+
+	// stellarCoreInfo
+	a.UpdateStellarCoreInfo()
+
+	// horizon-db and core-db
+	mustInitHorizonDB(a)
+	mustInitCoreDB(a)
+
+	// ingester
+	initIngester(a)
+
+	// txsub
+	initSubmissionSystem(a)
+
+	// path-finder
+	a.paths = &simplepath.Finder{a.CoreQ()}
+
+	// reaper
+	a.reaper = reap.New(a.config.HistoryRetentionCount, a.HorizonSession(nil))
+
+	// web.init
+	a.web = mustInitWeb(a.ctx, a.historyQ, a.coreQ, a.config.SSEUpdateFrequency, a.config.StaleThreshold, a.config.IngestFailedTransactions)
+
+	// web.rate-limiter
+	a.web.rateLimiter = maybeInitWebRateLimiter(a.config.RateQuota)
+
+	// web.middleware
+	// Note that we passed in `a` here for putting the whole App in the context.
+	// This parameter will be removed soon.
+	a.web.mustInstallMiddlewares(a, a.config.ConnectionTimeout)
+
+	// web.actions
+	a.web.mustInstallActions(a.config.EnableAssetStats, a.config.FriendbotURL)
+
+	// metrics and log.metrics
+	a.metrics = metrics.NewRegistry()
+	for level, meter := range *logmetrics.DefaultMetrics {
+		a.metrics.Register(fmt.Sprintf("logging.%s", level), meter)
+	}
+
+	// db-metrics
+	initDbMetrics(a)
+
+	// web.metrics
+	initWebMetrics(a)
+
+	// txsub.metrics
+	initTxSubMetrics(a)
+
+	// ingester.metrics
+	initIngesterMetrics(a)
+
+	// redis
+	initRedis(a)
 }
 
 // run is the function that runs in the background that triggers Tick each
@@ -351,8 +447,8 @@ func (a *App) run() {
 	}
 }
 
-// Context create a context on from the App type.
-func (a *App) Context(ctx context.Context) context.Context {
+// withAppContext create a context on from the App type.
+func withAppContext(ctx context.Context, a *App) context.Context {
 	return context.WithValue(ctx, &horizonContext.AppContextKey, a)
 }
 
@@ -368,16 +464,6 @@ func AppFromContext(ctx context.Context) *App {
 		return nil
 	}
 
-	val := ctx.Value(&horizonContext.AppContextKey)
-	if val == nil {
-		return nil
-	}
-
-	result, ok := val.(*App)
-
-	if ok {
-		return result
-	}
-
-	return nil
+	val, _ := ctx.Value(&horizonContext.AppContextKey).(*App)
+	return val
 }

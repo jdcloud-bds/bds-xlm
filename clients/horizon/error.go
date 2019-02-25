@@ -12,7 +12,7 @@ func (herr Error) Error() string {
 	return `Horizon error: "` + herr.Problem.Title + `". Check horizon.Error.Problem for more information.`
 }
 
-// ToProblem converts the Prolem to a problem.P
+// ToProblem converts the Problem to a problem.P
 func (prob Problem) ToProblem() problem.P {
 	extras := make(map[string]interface{})
 	for k, v := range prob.Extras {
@@ -20,12 +20,11 @@ func (prob Problem) ToProblem() problem.P {
 	}
 
 	return problem.P{
-		Type:     prob.Type,
-		Title:    prob.Title,
-		Status:   prob.Status,
-		Detail:   prob.Detail,
-		Instance: prob.Instance,
-		Extras:   extras,
+		Type:   prob.Type,
+		Title:  prob.Title,
+		Status: prob.Status,
+		Detail: prob.Detail,
+		Extras: extras,
 	}
 }
 

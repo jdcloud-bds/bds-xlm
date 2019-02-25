@@ -25,7 +25,7 @@ const (
 	// Scripts, that have yet to be ported to this codebase can then be leveraged
 	// to re-ingest old data with the new algorithm, providing a seamless
 	// transition when the ingested data's structure changes.
-	CurrentVersion = 15
+	CurrentVersion = 16
 )
 
 // Address is a type of a param provided to BatchInsertBuilder that gets exchanged
@@ -63,6 +63,9 @@ type Cursor struct {
 	// Err is the error that caused this iteration to fail, if any.
 	Err error
 
+	// Name is a unique identifier tracking the latest ingested ledger on stellar-core
+	Name string
+
 	lg   int32
 	tx   int
 	op   int
@@ -74,6 +77,18 @@ type Config struct {
 	// EnableAssetStats is a feature flag that determines whether to calculate
 	// asset stats in this ingestion system.
 	EnableAssetStats bool
+	// IngestFailedTransactions is a feature flag that determines if system
+	// should ingest failed transactions.
+	IngestFailedTransactions bool
+	// CursorName is the cursor used for ingesting from stellar-core.
+	// Setting multiple cursors in different Horizon instances allows multiple
+	// Horizons to ingest from the same stellar-core instance without cursor
+	// collisions.
+	CursorName     string
+	Kafka          bool
+	KafkaProxyHost string
+	KafkaProxyPort uint
+	KafkaTopic     string
 }
 
 // EffectIngestion is a helper struct to smooth the ingestion of effects.  this
@@ -119,6 +134,8 @@ type System struct {
 	// keep in the history database, working backwards from the latest core
 	// ledger.  0 represents "all ledgers".
 	HistoryRetentionCount uint
+	// IngestFailedTransactions toggles whether to ingest failed transactions
+	IngestFailedTransactions bool
 
 	lock    sync.Mutex
 	current *Session
@@ -218,6 +235,7 @@ func NewCursor(first, last int32, i *System) *Cursor {
 		FirstLedger: first,
 		LastLedger:  last,
 		CoreDB:      i.CoreDB,
+		Name:        i.Config.CursorName,
 		Metrics:     &i.Metrics,
 	}
 }

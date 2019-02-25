@@ -159,11 +159,22 @@ type EffectsQ struct {
 // `history_effects` table.
 type EffectType int
 
-// FeeStats is a row of data from the min, mode aggregate functions over the
-// `history_ledgers` table.
+// FeeStats is a row of data from the min, mode, percentile aggregate functions over the
+// `history_transactions` table.
 type FeeStats struct {
 	Min  null.Int `db:"min"`
 	Mode null.Int `db:"mode"`
+	P10  null.Int `db:"p10"`
+	P20  null.Int `db:"p20"`
+	P30  null.Int `db:"p30"`
+	P40  null.Int `db:"p40"`
+	P50  null.Int `db:"p50"`
+	P60  null.Int `db:"p60"`
+	P70  null.Int `db:"p70"`
+	P80  null.Int `db:"p80"`
+	P90  null.Int `db:"p90"`
+	P95  null.Int `db:"p95"`
+	P99  null.Int `db:"p99"`
 }
 
 // LatestLedger represents a response from the raw LatestLedgerBaseFeeAndSequence
@@ -196,6 +207,11 @@ type Ledger struct {
 	LedgerHeaderXDR            null.String `db:"ledger_header"`
 }
 
+// LedgerCapacityUsageStats contains ledgers fullness stats.
+type LedgerCapacityUsageStats struct {
+	CapacityUsage null.String `db:"ledger_capacity_usage"`
+}
+
 // LedgerCache is a helper struct to load ledger data related to a batch of
 // sequences.
 type LedgerCache struct {
@@ -218,19 +234,23 @@ type Operation struct {
 	TotalOrderID
 	TransactionID    int64             `db:"transaction_id"`
 	TransactionHash  string            `db:"transaction_hash"`
+	TxResult         string            `db:"tx_result"`
 	ApplicationOrder int32             `db:"application_order"`
 	Type             xdr.OperationType `db:"type"`
 	DetailsString    null.String       `db:"details"`
 	SourceAccount    string            `db:"source_account"`
+	// Check db2/history.Transaction.Successful field comment for more information.
+	TransactionSuccessful *bool `db:"transaction_successful"`
 }
 
 // OperationsQ is a helper struct to aid in configuring queries that loads
 // slices of Operation structs.
 type OperationsQ struct {
-	Err     error
-	parent  *Q
-	sql     sq.SelectBuilder
-	opIdCol string
+	Err           error
+	parent        *Q
+	sql           sq.SelectBuilder
+	opIdCol       string
+	includeFailed bool
 }
 
 // Q is a helper struct on which to hang common_trades queries against a history
@@ -286,7 +306,8 @@ type Transaction struct {
 	ApplicationOrder int32       `db:"application_order"`
 	Account          string      `db:"account"`
 	AccountSequence  string      `db:"account_sequence"`
-	FeePaid          int32       `db:"fee_paid"`
+	MaxFee           int32       `db:"max_fee"`
+	FeeCharged       int32       `db:"fee_charged"`
 	OperationCount   int32       `db:"operation_count"`
 	TxEnvelope       string      `db:"tx_envelope"`
 	TxResult         string      `db:"tx_result"`
@@ -299,14 +320,21 @@ type Transaction struct {
 	ValidBefore      null.Int    `db:"valid_before"`
 	CreatedAt        time.Time   `db:"created_at"`
 	UpdatedAt        time.Time   `db:"updated_at"`
+	// NULL indicates successful transaction. We wanted a migration to be fast
+	// however Postgres performs a table rewrite if a new column has a default
+	// non-null value. We need `NULL` to indicate successful transaction because
+	// otherwise all existing transactions would be interpreted as failed until
+	// ledger is reingested.
+	Successful *bool `db:"successful"`
 }
 
 // TransactionsQ is a helper struct to aid in configuring queries that loads
 // slices of transaction structs.
 type TransactionsQ struct {
-	Err    error
-	parent *Q
-	sql    sq.SelectBuilder
+	Err           error
+	parent        *Q
+	sql           sq.SelectBuilder
+	includeFailed bool
 }
 
 // ElderLedger loads the oldest ledger known to the history database

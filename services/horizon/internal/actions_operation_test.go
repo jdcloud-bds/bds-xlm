@@ -63,6 +63,19 @@ func TestOperationActions_Index(t *testing.T) {
 		ht.Assert.PageOf(1, w.Body)
 	}
 
+	// 400 for invalid tx hash
+	w = ht.Get("/transactions/ /operations")
+	ht.Assert.Equal(400, w.Code)
+
+	w = ht.Get("/transactions/invalid/operations")
+	ht.Assert.Equal(400, w.Code)
+
+	w = ht.Get("/transactions/1d2a4be72470658f68db50eef29ea0af3f985ce18b5c218f03461d40c47dc29/operations")
+	ht.Assert.Equal(400, w.Code)
+
+	w = ht.Get("/transactions/1d2a4be72470658f68db50eef29ea0af3f985ce18b5c218f03461d40c47dc29222/operations")
+	ht.Assert.Equal(400, w.Code)
+
 	// filtered by ledger
 	w = ht.Get("/ledgers/3/operations")
 	if ht.Assert.Equal(200, w.Code) {
@@ -72,6 +85,99 @@ func TestOperationActions_Index(t *testing.T) {
 	// missing ledger
 	w = ht.Get("/ledgers/100/operations")
 	ht.Assert.Equal(404, w.Code)
+}
+
+func TestOperationActions_Show_Failed(t *testing.T) {
+	ht := StartHTTPTest(t, "failed_transactions")
+	defer ht.Finish()
+
+	// Should show successful transactions only
+	w := ht.Get("/operations?limit=200")
+
+	if ht.Assert.Equal(200, w.Code) {
+		records := []operations.Base{}
+		ht.UnmarshalPage(w.Body, &records)
+
+		successful := 0
+		failed := 0
+
+		for _, op := range records {
+			if op.TransactionSuccessful {
+				successful++
+			} else {
+				failed++
+			}
+		}
+
+		ht.Assert.Equal(8, successful)
+		ht.Assert.Equal(0, failed)
+	}
+
+	// Should show all transactions: both successful and failed
+	w = ht.Get("/operations?limit=200&include_failed=true")
+
+	if ht.Assert.Equal(200, w.Code) {
+		records := []operations.Base{}
+		ht.UnmarshalPage(w.Body, &records)
+
+		successful := 0
+		failed := 0
+
+		for _, op := range records {
+			if op.TransactionSuccessful {
+				successful++
+			} else {
+				failed++
+			}
+		}
+
+		ht.Assert.Equal(8, successful)
+		ht.Assert.Equal(1, failed)
+	}
+
+	w = ht.Get("/transactions/aa168f12124b7c196c0adaee7c73a64d37f99428cacb59a91ff389626845e7cf/operations")
+
+	if ht.Assert.Equal(200, w.Code) {
+		records := []operations.Base{}
+		ht.UnmarshalPage(w.Body, &records)
+
+		ht.Assert.Equal(1, len(records))
+		for _, op := range records {
+			ht.Assert.False(op.TransactionSuccessful)
+			ht.Assert.Equal("aa168f12124b7c196c0adaee7c73a64d37f99428cacb59a91ff389626845e7cf", op.TransactionHash)
+		}
+	}
+
+	w = ht.Get("/transactions/56e3216045d579bea40f2d35a09406de3a894ecb5be70dbda5ec9c0427a0d5a1/operations")
+
+	if ht.Assert.Equal(200, w.Code) {
+		records := []operations.Base{}
+		ht.UnmarshalPage(w.Body, &records)
+
+		ht.Assert.Equal(1, len(records))
+		for _, op := range records {
+			ht.Assert.True(op.TransactionSuccessful)
+		}
+	}
+
+	// NULL value
+	_, err := ht.HorizonSession().ExecRaw(
+		`UPDATE history_transactions SET successful = NULL WHERE transaction_hash = ?`,
+		"56e3216045d579bea40f2d35a09406de3a894ecb5be70dbda5ec9c0427a0d5a1",
+	)
+	ht.Require.NoError(err)
+
+	w = ht.Get("/transactions/56e3216045d579bea40f2d35a09406de3a894ecb5be70dbda5ec9c0427a0d5a1/operations")
+
+	if ht.Assert.Equal(200, w.Code) {
+		records := []operations.Base{}
+		ht.UnmarshalPage(w.Body, &records)
+
+		ht.Assert.Equal(1, len(records))
+		for _, op := range records {
+			ht.Assert.True(op.TransactionSuccessful)
+		}
+	}
 }
 
 func TestOperationActions_Show(t *testing.T) {
@@ -113,7 +219,7 @@ func TestOperationActions_Regressions(t *testing.T) {
 	test.LoadScenario("trades")
 	w = ht.Get("/operations/25769807873")
 	if ht.Assert.Equal(200, w.Code) {
-		var result operations.ManageOffer
+		var result operations.ManageSellOffer
 		err := json.Unmarshal(w.Body.Bytes(), &result)
 		ht.Require.NoError(err, "failed to parse body")
 		ht.Assert.Equal("1.0000000", result.Price)
@@ -148,5 +254,34 @@ func TestOperation_BumpSequence(t *testing.T) {
 		ht.Require.NoError(err, "failed to parse body")
 		ht.Assert.Equal("bump_sequence", result.Type)
 		ht.Assert.Equal("300000000003", result.BumpTo)
+	}
+}
+
+// TestOperationActions_Show_Extra_TxID tests if failed transactions are not returned
+// when `tx_id` GET param is present. This was happening because `base.GetString()`
+// method retuns values from the query when URL param is not present.
+func TestOperationActions_Show_Extra_TxID(t *testing.T) {
+	ht := StartHTTPTest(t, "failed_transactions")
+	defer ht.Finish()
+
+	w := ht.Get("/accounts/GBXGQJWVLWOYHFLVTKWV5FGHA3LNYY2JQKM7OAJAUEQFU6LPCSEFVXON/operations?limit=200&tx_id=abc")
+
+	if ht.Assert.Equal(200, w.Code) {
+		records := []operations.Base{}
+		ht.UnmarshalPage(w.Body, &records)
+
+		successful := 0
+		failed := 0
+
+		for _, op := range records {
+			if op.TransactionSuccessful {
+				successful++
+			} else {
+				failed++
+			}
+		}
+
+		ht.Assert.Equal(3, successful)
+		ht.Assert.Equal(0, failed)
 	}
 }

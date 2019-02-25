@@ -1,19 +1,18 @@
 package resourceadapter
 
 import (
-	"context"
-
 	"github.com/stellar/go/amount"
 	. "github.com/stellar/go/protocols/horizon"
 	"github.com/stellar/go/services/horizon/internal/assets"
 	"github.com/stellar/go/services/horizon/internal/db2/core"
+	"github.com/stellar/go/support/errors"
 	"github.com/stellar/go/xdr"
 )
 
-func PopulateBalance(ctx context.Context, dest *Balance, row core.Trustline) (err error) {
+func PopulateBalance(dest *Balance, row core.Trustline) (err error) {
 	dest.Type, err = assets.String(row.Assettype)
 	if err != nil {
-		return
+		return errors.Wrap(err, "getting the string representation from the provided xdr asset type")
 	}
 
 	dest.Balance = amount.String(row.Balance)
@@ -22,20 +21,25 @@ func PopulateBalance(ctx context.Context, dest *Balance, row core.Trustline) (er
 	dest.Limit = amount.String(row.Tlimit)
 	dest.Issuer = row.Issuer
 	dest.Code = row.Assetcode
+	dest.LastModifiedLedger = row.LastModified
+	isAuthorized := row.IsAuthorized()
+	dest.IsAuthorized = &isAuthorized
 	return
 }
 
 func PopulateNativeBalance(dest *Balance, stroops, buyingLiabilities, sellingLiabilities xdr.Int64) (err error) {
 	dest.Type, err = assets.String(xdr.AssetTypeAssetTypeNative)
 	if err != nil {
-		return
+		return errors.Wrap(err, "getting the string representation from the provided xdr asset type")
 	}
 
 	dest.Balance = amount.String(stroops)
 	dest.BuyingLiabilities = amount.String(buyingLiabilities)
 	dest.SellingLiabilities = amount.String(sellingLiabilities)
+	dest.LastModifiedLedger = 0
 	dest.Limit = ""
 	dest.Issuer = ""
 	dest.Code = ""
+	dest.IsAuthorized = nil
 	return
 }
