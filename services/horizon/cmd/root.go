@@ -374,6 +374,35 @@ var configOpts = []*support.ConfigOption{
 		Required:    false,
 		Usage:       "applies pending migrations before starting horizon",
 	},
+	&support.ConfigOption{
+		Name:        "kafka",
+		ConfigKey:   &config.Kafka,
+		OptType:     types.Bool,
+		FlagDefault: false,
+		Usage:       "enables kafka that send data into kafka",
+	},
+	&support.ConfigOption{
+		Name:        "kafka-proxy-host",
+		ConfigKey:   &config.KafkaProxyHost,
+		OptType:     types.String,
+		FlagDefault: "127.0.0.1",
+		Usage:       "kafka proxy host",
+	},
+	&support.ConfigOption{
+		Name:        "kafka-proxy-port",
+		ConfigKey:   &config.KafkaProxyPort,
+		OptType:     types.Uint,
+		FlagDefault: uint(80),
+		Usage:       "kafka proxy port",
+	},
+	&support.ConfigOption{
+		Name:        "kafka-topic",
+		ConfigKey:   &config.KafkaTopic,
+		OptType:     types.String,
+		FlagDefault: "xlm",
+		Usage:       "kafka topic",
+	},
+
 }
 
 func init() {

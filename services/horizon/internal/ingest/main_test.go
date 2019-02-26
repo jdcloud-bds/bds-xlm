@@ -20,13 +20,13 @@ func TestIngest_Kahuna1(t *testing.T) {
 
 	// Test that re-importing fails
 	s.Err = nil
-	s.Run()
+	s.Run(false)
 	tt.Require.Error(s.Err, "Reimport didn't fail as expected")
 
 	// Test that re-importing fails with allowing clear succeeds
 	s.Err = nil
 	s.ClearExisting = true
-	s.Run()
+	s.Run(false)
 	tt.Require.NoError(s.Err, "Couldn't re-import, even with clear allowed")
 }
 
@@ -69,7 +69,7 @@ func ingest(tt *test.T, c Config) *Session {
 	sys := sys(tt, c)
 	s := NewSession(sys)
 	s.Cursor = NewCursor(1, ledger.CurrentState().CoreLatest, sys)
-	s.Run()
+	s.Run(false)
 
 	return s
 }

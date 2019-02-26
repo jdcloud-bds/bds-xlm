@@ -3,8 +3,12 @@ package ingest
 import (
 	"encoding/json"
 	"fmt"
-	"math"
+	"github.com/stellar/go/amount"
+	"github.com/stellar/go/protocols/horizon/operations"
+	"strings"
 	"time"
+
+	"math"
 
 	sq "github.com/Masterminds/squirrel"
 	"github.com/guregu/null"
@@ -211,6 +215,78 @@ func (ingest *Ingestion) Ledger(
 	)
 }
 
+type ledgerInBlock struct {
+	ID       string `json:"id"`
+	PT       string `json:"paging_token"`
+	Hash     string `json:"hash"`
+	PrevHash string `json:"prev_hash,omitempty"`
+	Sequence int32  `json:"sequence"`
+	// Deprecated - remove in: horizon-v0.17.0
+	TransactionCount           int32          `json:"transaction_count"`
+	SuccessfulTransactionCount int32          `json:"successful_transaction_count"`
+	FailedTransactionCount     int32          `json:"failed_transaction_count"`
+	OperationCount             int32          `json:"operation_count"`
+	ClosedAt                   time.Time      `json:"closed_at"`
+	TotalCoins                 string         `json:"total_coins"`
+	FeePool                    string         `json:"fee_pool"`
+	BaseFee                    int32          `json:"base_fee_in_stroops"`
+	BaseReserve                int32          `json:"base_reserve_in_stroops"`
+	MaxTxSetSize               int32          `json:"max_tx_set_size"`
+	ProtocolVersion            int32          `json:"protocol_version"`
+	HeaderXDR                  string         `json:"header_xdr"`
+	Transactions               []*transaction `json:"transactions"`
+}
+
+type transaction struct {
+	ID              string       `json:"id"`
+	PT              string       `json:"paging_token"`
+	Hash            string       `json:"hash"`
+	Ledger          int32        `json:"ledger"`
+	Account         string       `json:"source_account"`
+	AccountSequence string       `json:"source_account_sequence"`
+	FeePaid         int32        `json:"fee_paid"`
+	OperationCount  int32        `json:"operation_count"`
+	EnvelopeXdr     string       `json:"envelope_xdr"`
+	ResultXdr       string       `json:"result_xdr"`
+	ResultMetaXdr   string       `json:"result_meta_xdr"`
+	FeeMetaXdr      string       `json:"fee_meta_xdr"`
+	MemoType        string       `json:"memo_type"`
+	Signatures      string       `json:"signatures"`
+	Operations      []*operation `json:"operations"`
+}
+
+type operation struct {
+	TransactionID    string `json:"transaction_id"`
+	ApplicationOrder int32  `json:"application_order"`
+	Type             string `json:"type"`
+	Detail           string `json:"detail"`
+	SourceAccount    string `json:"source_account"`
+}
+
+func (ingest *Ingestion) LedgerRecord(id int64, header *core.LedgerHeader, successTxsCount int, failedTxsCount int, ops int) *ledgerInBlock {
+	ledger := new(ledgerInBlock)
+	ledger.ID = fmt.Sprintf("%d", id)
+	ledger.PT = fmt.Sprintf("%d", id)
+	ledger.Hash = header.LedgerHash
+	ledger.PrevHash = header.PrevHash
+	ledger.Sequence = int32(header.Sequence)
+	ledger.TransactionCount = int32(successTxsCount)
+	// Default to `transaction_count`
+	ledger.SuccessfulTransactionCount = int32(successTxsCount)
+	ledger.FailedTransactionCount = int32(successTxsCount)
+	ledger.OperationCount = int32(ops)
+	ledger.ClosedAt = time.Unix(header.CloseTime, 0).UTC()
+	ledger.TotalCoins = amount.String(header.Data.TotalCoins)
+	ledger.FeePool = amount.String(xdr.Int64(header.Data.FeePool))
+	ledger.BaseFee = int32(header.Data.BaseFee)
+	ledger.BaseReserve = int32(header.Data.BaseReserve)
+	ledger.MaxTxSetSize = int32(header.Data.MaxTxSetSize)
+	ledger.ProtocolVersion = int32(header.Data.LedgerVersion)
+	ledger.HeaderXDR = header.DataXDR()
+	return ledger
+
+}
+
 // Operation ingests the provided operation data into a new row in the
 // `history_operations` table
 func (ingest *Ingestion) Operation(
@@ -229,6 +305,28 @@ func (ingest *Ingestion) Operation(
 
 	ingest.builders[OperationsTableName].Values(id, txid, order, source.Address(), typ, djson)
 	return nil
+}
+
+func (ingest *Ingestion) OperationRecord(
+	id int64,
+	txid int64,
+	order int32,
+	source xdr.AccountId,
+	typ xdr.OperationType,
+	details map[string]interface{},
+
+) (*operation, error) {
+	op := new(operation)
+	op.Type, _ = operations.TypeNames[typ]
+	op.TransactionID = fmt.Sprintf("%d", txid)
+	op.ApplicationOrder = order
+	djson, err := json.Marshal(details)
+	if err != nil {
+		return op, errors.Wrap(err, "Error marshaling details")
+	}
+	op.Detail = string(djson)
+	op.SourceAccount = source.Address()
+	return op, nil
 }
 
 // OperationParticipants ingests the provided accounts `aids` as participants of
@@ -319,7 +417,6 @@ func (ingest *Ingestion) Trade(
 // Transaction ingests the provided transaction data into a new row in the
 // `history_transactions` table
 func (ingest *Ingestion) Transaction(
-	successful bool,
 	id int64,
 	tx *core.Transaction,
 	fee *core.TransactionFee,
@@ -347,8 +444,30 @@ func (ingest *Ingestion) Transaction(
 		tx.Memo(),
 		time.Now().UTC(),
 		time.Now().UTC(),
-		successful,
 	)
+}
+
+func (ingest *Ingestion) TransactionRecords(
+	id int64,
+	tx *core.Transaction,
+	fee *core.TransactionFee,
+) *transaction {
+	tr := new(transaction)
+	tr.ID = fmt.Sprintf("%d", id)
+	tr.PT = fmt.Sprintf("%d", id)
+	tr.Hash = tx.TransactionHash
+	tr.Ledger = tx.LedgerSequence
+	tr.Account = tx.SourceAddress()
+	tr.AccountSequence = fmt.Sprintf("%d", tx.Sequence())
+	tr.FeePaid = tx.MaxFee()
+	tr.OperationCount = int32(len(tx.Envelope.Tx.Operations))
+	tr.EnvelopeXdr = tx.EnvelopeXDR()
+	tr.ResultXdr = tx.ResultXDR()
+	tr.ResultMetaXdr = tx.ResultMetaXDR()
+	tr.FeeMetaXdr = fee.ChangesXDR()
+	tr.MemoType = tx.MemoType()
+	tr.Signatures = strings.Join(tx.Base64Signatures(), ",")
+	return tr
 }
 
 // TransactionParticipants ingests the provided account ids as participants of

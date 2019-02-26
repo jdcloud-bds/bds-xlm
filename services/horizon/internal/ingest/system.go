@@ -25,7 +25,7 @@ func (i *System) Backfill(n uint) error {
 		WithField("ingested", is.Ingested).
 		Info("ingest: backfill start")
 
-	is.Run()
+	is.Run(false)
 
 	log.WithField("start", start).
 		WithField("end", end).
@@ -187,7 +187,7 @@ func (i *System) ReingestRange(start, end int32) (int, error) {
 	is.Cursor = NewCursor(start, end, i)
 	is.ClearExisting = true
 
-	is.Run()
+	is.Run(false)
 	log.WithField("start", start).
 		WithField("end", end).
 		WithField("err", is.Err).
@@ -298,7 +298,7 @@ func (i *System) runOnce() {
 	log.WithFields(logFields).Info("Ingesting ledgers...")
 	ingestStart := time.Now()
 
-	is.Run()
+	is.Run(true)
 
 	if is.Err != nil {
 		// We need to use `Error` method because `is.Err` is `withMessage` struct from

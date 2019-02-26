@@ -63,6 +63,10 @@ func initIngester(app *App) {
 			EnableAssetStats:         app.config.EnableAssetStats,
 			IngestFailedTransactions: app.config.IngestFailedTransactions,
 			CursorName:               app.config.CursorName,
+			Kafka:                    app.config.Kafka,
+			KafkaTopic:               app.config.KafkaTopic,
+			KafkaProxyPort:           app.config.KafkaProxyPort,
+			KafkaProxyHost:           app.config.KafkaProxyHost,
 		},
 	)
 

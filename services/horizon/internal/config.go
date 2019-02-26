@@ -82,4 +82,9 @@ type Config struct {
 	// ApplyMigrations will apply pending migrations to the horizon database
 	// before starting the horizon service
 	ApplyMigrations bool
+
+	Kafka          bool
+	KafkaProxyHost string
+	KafkaProxyPort uint
+	KafkaTopic     string
 }

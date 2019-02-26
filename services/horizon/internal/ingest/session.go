@@ -3,8 +3,12 @@ package ingest
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"net/http"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/stellar/go/clients/stellarcore"
@@ -22,7 +26,18 @@ import (
 
 // Run starts an attempt to ingest the range of ledgers specified in this
 // session.
-func (is *Session) Run() {
+
+type BlockData struct {
+	Records []BlockValue `json:"records"`
+}
+
+type BlockValue struct {
+	Value ledgerInBlock `json:"value"`
+}
+
+func (is *Session) Run(flag bool) {
+	bd := new(BlockData)
+	bd.Records = make([]BlockValue, 0)
 	if is.Cursor == nil {
 		is.Err = errors.New("no cursor set on session")
 		return
@@ -47,8 +62,17 @@ func (is *Session) Run() {
 
 		is.validateLedger()
 		is.clearLedger()
-		is.ingestLedger()
+		ledger := is.ingestLedger()
+		bv := new(BlockValue)
+		bv.Value = *ledger
+		bd.Records = append(bd.Records, *bv)
+
 		is.flush()
+
+		if is.Config.Kafka && flag {
+			is.sendToKafka(sectionStart+i, is.Cursor.LedgerSequence(), bd)
+		}
+		bd.Records = make([]BlockValue, 0)
 
 		i++
 		if i%100 == 0 {
@@ -87,6 +111,38 @@ func (is *Session) Run() {
 	}
 
 	is.Err = errors.Wrap(is.reportCursorState(), "reportCursorState error")
+}
+
+func (is *Session) sendToKafka(start, end int32, data *BlockData) error {
+	sub, _ := json.Marshal(data)
+	body := ioutil.NopCloser(strings.NewReader(string(sub)))
+
+	client := &http.Client{}
+	var url string
+	if is.Config.KafkaProxyPort == uint(80) {
+		url = fmt.Sprintf("http://%s/topics/%s", is.Config.KafkaProxyHost, is.Config.KafkaTopic)
+	} else {
+		url = fmt.Sprintf("http://%s:%d/topics/%s", is.Config.KafkaProxyHost, is.Config.KafkaProxyPort, is.Config.KafkaTopic)
+	}
+	req, _ := http.NewRequest("POST", url, body)
+	req.Header.Set("Content-Type", "application/vnd.kafka.json.v1+json")
+	req.Header.Set("Host", is.Config.KafkaProxyHost)
+
+	resp, err := client.Do(req)
+
+	defer resp.Body.Close()
+	if err != nil {
+		return err
+	}
+	_, err = ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	log.WithFields(ilog.F{
+		"start": start,
+		"end":   end,
+	}).Info("Horizon send data into kafka successfully!")
+	return nil
 }
 
 func (is *Session) clearLedger() {
@@ -396,9 +452,10 @@ func (is *Session) ingestEffects() {
 }
 
 // ingestLedger ingests the current ledger
-func (is *Session) ingestLedger() {
+func (is *Session) ingestLedger() *ledgerInBlock {
+	ledger := new(ledgerInBlock)
 	if is.Err != nil {
-		return
+		return ledger
 	}
 
 	start := time.Now()
@@ -410,19 +467,34 @@ func (is *Session) ingestLedger() {
 		is.Cursor.SuccessfulLedgerOperationCount(),
 	)
 
+	ledger = is.Ingestion.LedgerRecord(
+		is.Cursor.LedgerID(),
+		is.Cursor.Ledger(),
+		is.Cursor.SuccessfulTransactionCount(),
+		is.Cursor.FailedTransactionCount(),
+		is.Cursor.SuccessfulLedgerOperationCount(),
+	)
+
 	for is.Cursor.NextTx() {
-		is.ingestTransaction()
+		t := is.ingestTransaction()
+		if !is.Cursor.Transaction().IsSuccessful() {
+			continue
+		}
+		ledger.Transactions = append(ledger.Transactions, t)
 	}
 
 	is.Ingested++
 	if is.Metrics != nil {
 		is.Metrics.IngestLedgerTimer.Update(time.Since(start))
 	}
+
+	return ledger
 }
 
-func (is *Session) ingestOperation() {
+func (is *Session) ingestOperation() *operation {
+	op := new(operation)
 	if is.Err != nil {
-		return
+		return op
 	}
 
 	is.Err = is.Ingestion.Operation(
@@ -435,8 +507,17 @@ func (is *Session) ingestOperation() {
 	)
 	if is.Err != nil {
 		is.Err = errors.Wrap(is.Err, "Ingestion.Operation error")
-		return
+		return op
 	}
+
+	op, is.Err = is.Ingestion.OperationRecord(
+		is.Cursor.OperationID(),
+		is.Cursor.TransactionID(),
+		is.Cursor.OperationOrder(),
+		is.Cursor.OperationSourceAccount(),
+		is.Cursor.OperationType(),
+		is.operationDetails(),
+	)
 
 	is.ingestOperationParticipants()
 
@@ -454,8 +535,9 @@ func (is *Session) ingestOperation() {
 
 	if is.Err != nil {
 		is.Err = errors.Wrap(is.Err, "Cursor.AssetsModified.IngestOperation error")
-		return
+		return op
 	}
+	return op
 }
 
 func (is *Session) ingestOperationParticipants() {
@@ -660,31 +742,39 @@ func (is *Session) tradeDetails(buyer, seller xdr.AccountId, claim xdr.ClaimOffe
 	return
 }
 
-func (is *Session) ingestTransaction() {
+func (is *Session) ingestTransaction() *transaction {
+	t := new(transaction)
 	if is.Err != nil {
-		return
+		return t
 	}
 
 	if !is.Config.IngestFailedTransactions && !is.Cursor.Transaction().IsSuccessful() {
-		return
+		return t
 	}
 
-	is.Err = is.Ingestion.Transaction(
-		is.Cursor.Transaction().IsSuccessful(),
+	t = is.Ingestion.TransactionRecords(
 		is.Cursor.TransactionID(),
 		is.Cursor.Transaction(),
 		is.Cursor.TransactionFee(),
 	)
 
 	if is.Err != nil {
-		return
+		return t
 	}
 
+	t = is.Ingestion.TransactionRecords(
+		is.Cursor.TransactionID(),
+		is.Cursor.Transaction(),
+		is.Cursor.TransactionFee(),
+	)
+
 	for is.Cursor.NextOp() {
-		is.ingestOperation()
+		op := is.ingestOperation()
+		t.Operations = append(t.Operations, op)
 	}
 
 	is.ingestTransactionParticipants()
+	return t
 }
 
 func (is *Session) ingestTransactionParticipants() {

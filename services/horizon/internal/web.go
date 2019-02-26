@@ -283,6 +283,8 @@ func (w *web) mustInstallActions(config Config, pathFinder paths.Finder) {
 		r.Post("/friendbot", redirectFriendbot)
 		r.Get("/friendbot", redirectFriendbot)
 	}
+	//trigger for sending block to kafka
+	r.Get("/send", SendAction{}.Handle)
 
 	r.NotFound(NotFoundAction{}.Handle)
 }

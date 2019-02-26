@@ -96,9 +96,28 @@ func (q *TransactionsQ) ForLedger(seq int32) *TransactionsQ {
 	return q
 }
 
+
 // IncludeFailed changes the query to include failed transactions.
 func (q *TransactionsQ) IncludeFailed() *TransactionsQ {
 	q.includeFailed = true
+	return q
+}
+
+func (q *TransactionsQ) ForLedgerBatch(seqStart, seqEnd int32) *TransactionsQ {
+	ledgers := make([]Ledger, 0)
+	q.Err = q.parent.LedgerBySequenceBatch(&ledgers, seqStart, seqEnd)
+	if q.Err != nil {
+		return q
+	}
+
+	start := toid.ID{LedgerSequence: seqStart}
+	end := toid.ID{LedgerSequence: seqEnd + 1}
+	q.sql = q.sql.Where(
+		"ht.id >= ? AND ht.id < ?",
+		start.ToInt64(),
+		end.ToInt64(),
+	)
+
 	return q
 }
 

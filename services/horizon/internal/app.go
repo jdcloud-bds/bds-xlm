@@ -99,6 +99,15 @@ func (a *App) Serve() {
 
 	log.Infof("Starting horizon on %s (ingest: %v)", addr, a.config.Ingest)
 
+	log.Infof("Starting horizon on %s (ingest: %v, kafka: %v)", addr, a.config.Ingest, a.config.Kafka)
+	if a.config.Kafka {
+		log.Infof("The kafka information is (kafka-proxy-host: %v, kafka-proxy-port: %v, kafka-topic: %v)", a.config.KafkaProxyHost, a.config.KafkaProxyPort, a.config.KafkaTopic)
+	}
+
+	log.Infof("Starting horizon on %s (ingest: %v, kafka: %v)", addr, a.config.Ingest, a.config.Kafka)
+	if a.config.Kafka {
+		log.Infof("The kafka information is (kafka-proxy-host: %v, kafka-proxy-port: %v, kafka-topic: %v)", a.config.KafkaProxyHost, a.config.KafkaProxyPort, a.config.KafkaTopic)
+	}
 	go a.run()
 
 	if a.expingester != nil {

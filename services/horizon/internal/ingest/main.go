@@ -86,7 +86,11 @@ type Config struct {
 	// Setting multiple cursors in different Horizon instances allows multiple
 	// Horizons to ingest from the same stellar-core instance without cursor
 	// collisions.
-	CursorName string
+	CursorName     string
+	Kafka          bool
+	KafkaProxyHost string
+	KafkaProxyPort uint
+	KafkaTopic     string
 }
 
 // EffectIngestion is a helper struct to smooth the ingestion of effects.  this

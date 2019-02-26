@@ -17,6 +17,14 @@ func (q *Q) LedgerBySequence(dest interface{}, seq int32) error {
 	return q.Get(dest, sql)
 }
 
+//LedgerBySequenceBatch loads the ledgers range in start and end
+func (q *Q) LedgerBySequenceBatch(dest interface{}, seqStart int32, seqEnd int32) error {
+	sql := selectLedger.
+		Where("sequence >= ? and sequence <= ?", seqStart, seqEnd).OrderBy("sequence")
+
+	return q.Select(dest, sql)
+}
+
 // Ledgers provides a helper to filter rows from the `history_ledgers` table
 // with pre-defined filters.  See `LedgersQ` methods for the available filters.
 func (q *Q) Ledgers() *LedgersQ {
