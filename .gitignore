@@ -1,0 +1,8 @@
+.DS_Store
+/vendor
+/dist
+/local-archive
+/.vscode/*.sql
+.idea
+debug
+.bundle
