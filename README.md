@@ -3,7 +3,7 @@
 ## Introduction
 bds-xlm is one of the independent modules in open source project of block chain data service (BDS) - provides full node data service.
 
-*bds-xlm* Based on the horizon-v0.16.0 version of [stellar/go](https://github.com/stellar/go),*bds-xlm* redeveloped to support sending new block data directly to message middleware service of kafka to facilitate upstream services to subscribe and consume. Need to compile and install [stellar/core](https://github.com/stellar/stellar-core)v12.1.0 before running horizon.
+*bds-xlm* Based on the horizon-v0.22.1 version of [stellar/go](https://github.com/stellar/go),*bds-xlm* redeveloped to support sending new block data directly to message middleware service of kafka to facilitate upstream services to subscribe and consume. Need to compile and install [stellar/core](https://github.com/stellar/stellar-core) v12.1.0 before running horizon.
 
 ## Architecture 
 ![Architecture](./docs/bds-architecture.jpg)
