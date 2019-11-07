@@ -3,7 +3,7 @@
 ## 介绍
 bds-xlm 是开源项目区块链数据服务（BDS）的其中一个独立模块 - 提供全节点数据推送服务。
 
-*bds-xlm* 基于 [stellar/go](https://github.com/stellar/go) 的 horizon-v0.16.0 版本进行二次开发，支持直接将新增的区块数据往消息中间件服务 kafka 发送，方便上游的服务来订阅消费。
+*bds-xlm* 基于 [stellar/go](https://github.com/stellar/go) 的 horizon-v0.22.1 版本进行二次开发，支持直接将新增的区块数据往消息中间件服务 kafka 发送，方便上游的服务来订阅消费。在运行horizon之前需要参照[stellar/core](https://github.com/stellar/stellar-core)v12.1.0进行编译安装。
 
 ## 架构
 ![架构](./docs/bds-architecture.jpg)
