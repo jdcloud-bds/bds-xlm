@@ -459,7 +459,7 @@ func (ingest *Ingestion) TransactionRecords(
 	tr.Ledger = tx.LedgerSequence
 	tr.Account = tx.SourceAddress()
 	tr.AccountSequence = fmt.Sprintf("%d", tx.Sequence())
-	tr.FeePaid = tx.MaxFee()
+	tr.FeePaid = tx.FeeCharged()
 	tr.OperationCount = int32(len(tx.Envelope.Tx.Operations))
 	tr.EnvelopeXdr = tx.EnvelopeXDR()
 	tr.ResultXdr = tx.ResultXDR()
